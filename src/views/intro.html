@@ -1,0 +1,363 @@
+<section>
+  <h3>API for inTask.me application</h3>
+  <p>
+    The main-user is the user who registered in the application and uses it on
+    his behalf.
+  </p>
+  <p>
+    Upon registration / login, the main-user receives an access token, which
+    contains his id and the client id on which the application is launched.
+  </p>
+  <p>
+    All subsequent requests are made relative to the main-user and are limited
+    to the rights and scope of this user. It means that they must contain its
+    token.
+  </p>
+  <p>
+    The main user in relation to objects in the application can have the
+    following types. Which in turn determines its access rights to objects in
+    the application.
+  </p>
+  <pre id="result">
+    user_type: {
+      owner: 1,
+      curator: 2,
+      member: 3,
+      all: 4
+    }
+  </pre>
+  <p>
+    Each user has a visibility setting. These settings determine the ability to
+    view and find a user profile by other users.
+  </p>
+  <pre id="result">
+    visible: {
+      0: not visible,
+      1: only from user list,
+      2: visible for all
+    }
+  </pre>
+  <p>
+    Each user has a contact setting. This setting determines the relationship of
+    one user to another specific user.
+  </p>
+  <pre id="result">
+    contact_type: {
+      0: inaccessible,
+      1: sent an invitation to contact,
+      2: received an invitation to contact,
+      3: contact formed,
+      4: contact rejected,
+    }
+  </pre>
+
+  <ul>
+    <li>
+      <p>
+        Get <b>main-user</b> information. If the user does not exist, then it is
+        created
+      </p>
+      <pre id="result">
+        GET: /api/main-user
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          packet: (optional) - for packet requests
+        }
+        return: <i>error</i> or [{
+          id, username, email, visible, name, dateofbirth, city, country, gender, phone, avatar
+        }]
+        errors: [
+          { name: 'WrongMustCondition:mainUser_id', desc: 'An invalid main-user attribute value passed. Authenticated user required', status: 400 },
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Get <b>users</b> information</p>
+      <pre id="result">
+        GET: /api/users
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          userId: (optional) filtered on user,
+          group_id: (optional) - filtered on group,
+          context_id: (not yet supported) - filtered on context, 
+          like: (optional) - filtered on text in user attribute name, username,
+          contact_type: (optional) [1-4] - user contact_type filtering,
+          limit: (required) - elements per query,
+          offset: (required) - elements offset
+        }
+        return: <i>error</i> or [{
+          id, username, email, visible, name, dateofbirth, city, country, gender, phone, avatar
+        }]
+        errors: [
+          { name: 'WrongMustCondition:mainUser_id', desc: 'An invalid main-user attribute value passed. Authenticated user required', status: 400 },
+          { name: 'WrongMustCondition:limit', desc: 'The condition (limit) is not set', status: 400 },
+          { name: 'WrongMustCondition:offset', desc: 'The condition (offset) is not set', status: 400 },
+          { name: 'WrongCondition:userId', desc: 'The condition (user_id) is present but does not contain a value.', status: 400 },
+          { name: 'WrongCondition:group_id', desc: 'The condition (user_id) is present but does not contain a value.', status: 400 },
+          { name: 'WrongCondition:like', desc: 'The condition (like) is present but does not contain a value.', status: 400 },
+          { name: 'WrongCondition:contact_type', desc: 'The condition (contact_type) is present but does not contain a value.', status: 400 },
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Get <b>groups</b> information</p>
+      <pre id="result">
+        GET: /api/groups
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          userId: (optional) filtered on user,
+          group_id: (optional) - filtered on group,
+          user_type: (optional) - filtered on user type groups,
+          context_id: (not yet supported) - filtered on context, 
+          like: (optional) - filtered on text in user attribute name, username,
+          limit: (required) - elements per query,
+          offset: (required) - elements offset
+        }
+        return: <i>error</i> or [{
+          id, user_type, name, parent, creating, reading, updating, deleting,
+				  el_creating, el_reading, el_updating, el_deleting, group_type, haveChild, owner
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Create new <b>group</b></p>
+      <pre id="result">
+        POST: /api/groups
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        body: {
+          name: (required) - name of group,
+          parent: (optional) - parent of group
+        }
+        return: <i>error</i> or [{
+          id, user_type, name, parent, creating, reading, updating, deleting,
+				  el_creating, el_reading, el_updating, el_deleting, group_type, haveChild, owner
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Delete exist <b>group</b></p>
+      <pre id="result">
+        DELETE: /api/groups
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        body: {
+          group_id: (required) - group,
+        }
+        return: <i>error</i> or [{
+          group_id
+        }]
+        errors: [
+          { name: 'GroupHasElements', desc: 'Group cannot be deleted because it contains items', status: 400 },
+          { name: 'NoRows', desc: 'No records for the current request', status: 400 },
+          { name: 'DeleteCanOwner', desc: 'Only the owner can delete', status: 400 },
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Get exist <b>contexts</b></p>
+      <pre id="result">
+        GET: /api/contexts
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          context_id: (optional) - get context on id
+          task_id: (optional) - task filtering
+          group_id: (optional) - group filtering,
+          like: (optional) - filtered on text in contexts attribute value,
+          limit: (optional) - elements per query,
+          offset: (optional) - elements offset          
+        }
+        return: <i>error</i> or [{
+          
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Set <b>context</b> to element</p>
+      <pre id="result">
+        POST: /api/contexts
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          task_id: (required)
+          values = { context_id, context_value }: (required)
+        }
+        return: <i>error</i> or { 
+          data: [{
+            group_id, task_id, context_id, value, user_id, inherited_id, active, note, activity_type
+          }]
+        }
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Delete <b>context</b> from element</p>
+      <pre id="result">
+        DELETE: /api/contexts
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          task_id: (optional)
+          values = { context_id, context_value }: (optional)
+        }
+        return: <i>error</i> or [{
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Get exist <b>tasks</b></p>
+      <pre id="result">
+        GET: /api/tasks
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          task_id: (optional) - task filtering
+          group_id: (optional) - group filtering,
+          parent_id: (optional) - parent filtering,
+          type_el: (optional) - type filtering,
+          like: (optional) - filtered on text in contexts attribute value,
+          userId: (optional) - user filtering,
+          limit: (optional) - elements per query,
+          offset: (optional) - elements offset          
+        }
+        return: <i>error</i> or [{
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Create new <b>task</b></p>
+      <pre id="result">
+        POST: /api/tasks
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          group_id: (optional) - group filtering,
+          parent_id: (optional) - parent filtering,
+          isStart: (optional) - place element in list (start - true, end - false)
+        }
+        return: <i>error</i> or [{
+          data:
+          activityData:
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Delete exist <b>task</b></p>
+      <pre id="result">
+        POST: /api/tasks
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          group_id: (optional) - group filtering,
+          task_id: (required)
+        }
+        return: <i>error</i> or [{
+          data
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Update exist <b>task</b> values</p>
+      <pre id="result">
+        PUT: /api/tasks
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        body: {
+          task_id: (required)
+          group_id: (required)
+          position: (optional)
+          parent_id: (optional)
+          isBefore: (optional)
+        }
+        return: <i>error</i> or [{
+          data
+        }]
+        errors: [
+          { name: 'WrongBody', desc: 'For update need JSON object with values in body', status: 400 },
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Update position <b>task</b> in list</p>
+      <pre id="result">
+        PUT: /api/tasks/order
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        body: {
+          task_id: (required)
+          values: { name, note }
+        }
+        return: <i>error</i> or [{
+          data
+        }]
+        errors: [
+          { name: 'WrongBody', desc: 'For update need JSON object with values in body', status: 400 },
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Get exist<b>activity</b></p>
+      <pre id="result">
+        GET: /api/activity
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        body: {
+          type_el: (required)
+          limit: (required)
+          offset: (required)
+          group_id: (optional)
+          id: (optional)
+          task_id: (optional)
+          userId: (optional)
+          like: (optional)
+        }
+        return: <i>error</i> or [{
+          data
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Create new <b>activity</b></p>
+      <pre id="result">
+        POST: /api/activity
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        body: {
+        }
+        return: <i>error</i> or [{
+          data
+        }]
+        errors: [
+        ]
+      </pre>
+    </li>
+  </ul>
+  <p>Error signature</p>
+  <pre id="result">
+    error: {
+      data: 'Name of error',
+      status: http status
+    }
+  </pre>
+</section>

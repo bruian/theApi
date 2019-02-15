@@ -1,0 +1,14 @@
+npm-debug.log
+yarn-error.log
+package-lock.json
+.DS_Store
+node_modules/
+dist/
+logs/
+.github/
+src/keys/
+mochawesome-report/
+out/
+dev.env
+.idea
+*.iml

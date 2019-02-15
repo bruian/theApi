@@ -1,0 +1,110 @@
+<section>
+  <h3>API for inTask.me application</h3>
+  <p>
+    Main-user - это пользователь, который зарегистрировался в приложении и
+    пользуется им от своего имени.
+  </p>
+  <p>
+    Главный пользователь при регистрации/логине получает токен доступа, в
+    котором содержится его id и id-клиента на котором запускается приложение.
+  </p>
+  <p>
+    Все последующие запросы делаются относительно main-user и ограничены правами
+    и областью видимости этого пользователя. А значит обязательно должны
+    содержать его токен.
+  </p>
+  <p>
+    Главный пользователь по отношению к объектам в приложении может иметь
+    следующие типы. Что в свою очередь определяет его права доступа к объектам в
+    приложении.
+  </p>
+  <pre id="result">
+    user_type: {
+      owner: 1,
+      curator: 2,
+      member: 3,
+      all: 4
+    }
+  </pre>
+  <p>
+    Каждый пользователь обладает настройкой видимости. Эти настройка определяет
+    возможность просматривать и находить профиль пользователя другими
+    пользователями.
+  </p>
+  <pre id="result">
+    visible: {
+      0: not visible,
+      1: only from user list,
+      2: visible for all
+    }
+  </pre>
+  <p>
+    Каждый пользователь обладает настройкой контакта. Эта настройка определяет
+    отношение одного пользователя к другому конкретному пользователю.
+  </p>
+  <pre id="result">
+    contact_type: {
+      0: inaccessible,
+      1: sent an invitation to contact,
+      2: received an invitation to contact,
+      3: contact formed,
+      4: contact rejected,
+    }
+  </pre>
+
+  <ul>
+    <li>
+      <p>
+        Get <b>main-user</b> information. If the user does not exist, then it is
+        created
+      </p>
+      <pre id="result">
+        GET: /api/main-user
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        body: {
+          packet: (optional) - for packet requests
+        }
+        return: <i>error</i> or [{
+          id, username, email, visible, name, dateofbirth, city, country, gender, phone, avatar
+        }]
+        errors: [
+          { name: 'WrongMainUser', desc: 'An invalid main-user attribute value passed. Number required', status: 400 },
+        ]
+      </pre>
+    </li>
+    <li>
+      <p>Get <b>users</b> information.</p>
+      <pre id="result">
+        GET: /api/users
+        Content-Type: application/x-www-form-urlencoded
+        Headers: "Authorization: Bearer your_access_token"
+        query: {
+          userId: (optional) filtered on user,
+          group_id: (optional) - filtered on group,
+          context_id: (not yet supported) - filtered on context, 
+          like: (optional) - filtered on text in user attribute name, username,
+          contact_type: (optional) [1-4] - user contact_type filtering,
+          limit: (required) - elements per query,
+          offset: (required) - elements offset
+        }
+        return: <i>error</i> or [{
+          id, username, email, visible, name, dateofbirth, city, country, gender, phone, avatar
+        }]
+        errors: [
+          { name: 'WrongConditionMainUser', desc: 'An invalid main-user attribute value passed. Number required', status: 400 },
+          { name: 'WrongConditionUser', desc: 'The condition (user_id) is present but does not contain a value.', status: 400 },
+          { name: 'WrongConditionLimit', desc: 'The condition (limit) is not set', status: 400 },
+          { name: 'WrongConditionOffset', desc: 'The condition (offset) is not set', status: 400 },
+        ]
+      </pre>
+    </li>
+  </ul>
+  <p>Error signature</p>
+  <pre id="result">
+    error: {
+      data: 'Name of error',
+      status: http status
+    }
+  </pre>
+</section>
