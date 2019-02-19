@@ -165,8 +165,8 @@ async function getActivity(conditions) {
 			act.name, act.note, act.productive, uf.url as avatar,
 			act.part, act.status, act.owner, act.start, act.ends
 		FROM activity_list AS al
-		RIGHT JOIN activity AS act ON al.id = act.id
-		RIGHT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
+		LEFT JOIN activity AS act ON al.id = act.id
+		LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
 		WHERE al.group_id IN (SELECT * FROM ${pgGroups}) AND (al.type_el & $2 > 0) ${pgСonditions}
 		ORDER BY act.start ${pgLimit};`;
   // ORDER BY al.group_id, (al.p::float8/al.q) ${pgLimit};`
@@ -322,7 +322,7 @@ async function createActivity(conditions) {
         params = [
           conditions.mainUser_id,
           existsElements[0].group_id,
-          1,
+          conditions.type_el,
           isStart,
         ];
         const { rows } = await client.query(queryText, params);
@@ -412,10 +412,11 @@ async function createActivity(conditions) {
 				act.task_id, act.name, act.note, act.productive, act.part,
 				act.status, act.owner, act.start, act.ends, uf.url as avatar
 			FROM activity_list AS al
-			RIGHT JOIN activity AS act ON al.id = act.id
-			RIGHT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
-			WHERE act.task_id IN (SELECT * FROM UNNEST ($1::integer[]))
-			ORDER BY act.start;`;
+			LEFT JOIN activity AS act ON al.id = act.id
+			LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
+			WHERE act.task_id IN (SELECT * FROM UNNEST($1::varchar[]))
+      ORDER BY act.start;`;
+      // WHERE act.task_id IN (SELECT * FROM UNNEST ($1::integer[]))
       // ORDER BY act.task_id, (al.p::float8/al.q);`
       params = [returnElements];
     } else {
@@ -424,8 +425,8 @@ async function createActivity(conditions) {
 				act.task_id, act.name, act.note, act.productive, act.part,
 				act.status, act.owner, act.start, act.ends, uf.url as avatar
 			FROM activity_list AS al
-			RIGHT JOIN activity AS act ON al.id = act.id
-			RIGHT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
+			LEFT JOIN activity AS act ON al.id = act.id
+			LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
 			WHERE al.id = $1;`;
       params = [elementId];
     }

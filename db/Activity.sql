@@ -249,8 +249,8 @@ WITH RECURSIVE main_visible_groups AS (
 		act.name, act.note, act.productive, uf.url as avatar,
 		act.part, act.status, act.owner, act.start, act.ends
 	FROM activity_list AS al
-	RIGHT JOIN activity AS act ON al.id = act.id
-	RIGHT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
+	LEFT JOIN activity AS act ON al.id = act.id
+	LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
 	WHERE al.group_id IN (SELECT * FROM main_visible_groups) AND (al.type_el & 2 > 0)
 	ORDER BY al.group_id, (al.p::float8/al.q) LIMIT 10 OFFSET 0;
 
@@ -265,10 +265,13 @@ WITH RECURSIVE main_visible_groups AS (
 		act.name, act.note, act.productive, uf.url as avatar,
 		act.part, act.status, act.owner, act.start, act.ends
 	FROM activity_list AS al
-	RIGHT JOIN activity AS act ON al.id = act.id
-	RIGHT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
+	LEFT JOIN activity AS act ON al.id = act.id
+	LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
 	WHERE al.group_id IN (SELECT * FROM main_visible_groups) --${pgСonditions}
 	ORDER BY al.group_id, (al.p::float8/al.q) --${pgLimit};
+
+select * FROM activity;
+SELECT * from activity_list;
 
 /* Поиск активности со статусами "Started-1" или "Continued-5" */
 SELECT al.id, act.status, act.start, act.ends

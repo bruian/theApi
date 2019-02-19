@@ -68,8 +68,8 @@ async function getTasks(conditions) {
   let pgСonditions = '';
   let pgUserGroups = '';
   let pgGroups = 'main_visible_groups'; // tasks visible only for main user
-  let pgParentCondition = ' AND tsk.parent = 0'; // select Top level tasks
-  let pgParentCondition2 = 'parent = 0';
+  let pgParentCondition = ' AND tsk.parent is null'; // select Top level tasks
+  let pgParentCondition2 = 'parent is null';
   let pgTaskCondition = '';
   let pgGroupCondition = '';
   let pgSearchText = '';
@@ -164,9 +164,9 @@ async function getTasks(conditions) {
 			LEFT JOIN groups AS grp ON gl.group_id = grp.id
 			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = $1)
 		) ${pgUserGroups}, descendants(id, parent, depth, path) AS (
-			SELECT id, parent, 1 depth, ARRAY[id] FROM tasks WHERE ${pgParentCondition2}
+			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM tasks WHERE ${pgParentCondition2}
 		UNION
-			SELECT t.id, t.parent, d.depth + 1, path || t.id FROM tasks t
+			SELECT t.id, t.parent, d.depth + 1, path::varchar[] || t.id::varchar FROM tasks t
 			JOIN descendants d ON t.parent = d.id
 		), acts(duration, task_id) AS (
 			SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
@@ -258,9 +258,8 @@ async function createTask(conditions) {
     const elementId = newElements[0].add_task;
 
     queryText = `SELECT tl.task_id, tl.group_id, tl.p, tl.q,
-			tsk.tid, tsk.name, tsk.owner AS tskowner,
-			tsk.status, tsk.duration, tsk.note, tsk.parent,
-			0 AS havechild,	1 as depth
+			tsk.tid, tsk.name, tsk.owner AS tskowner, tsk.note, tsk.parent,
+			0 AS status, 0 as duration, 0 AS havechild,	1 as depth
 		FROM tasks_list AS tl
 		RIGHT JOIN tasks AS tsk ON tl.task_id = tsk.id
 		WHERE tl.task_id = $1 AND tl.group_id = $2`;
@@ -441,7 +440,10 @@ async function updatePosition(conditions) {
     conditionMustBeSet(conditions, 'group_id');
     conditionMustBeSet(conditions, 'task_id');
 
-    if (conditionMustSet(conditions, 'position')) {
+    if (
+      conditionMustSet(conditions, 'position') &&
+      conditions.position.length > 0
+    ) {
       position = conditions.position; // eslint-disable-line
     }
 

@@ -46,7 +46,9 @@ function logRequest(timeStart, ctx, condition, data) {
       key !== 'user_id' &&
       key !== 'client_id' &&
       key !== 'role' &&
-      key !== 'email'
+      key !== 'email' &&
+      key !== 'iat' &&
+      key !== 'exp'
     ) {
       condString = `${condString} | ${key}:${condition[key]}`;
     }

@@ -49,7 +49,7 @@ function conditionMustSet(conditions, condition) {
     condition,
   );
   const hasValue = hasProperty ? conditions[condition] : false;
-  if (hasProperty && !hasValue) {
+  if (hasProperty && hasValue === false) {
     /* Bad request */
     throw new VError(
       {
@@ -62,7 +62,7 @@ function conditionMustSet(conditions, condition) {
     );
   }
 
-  return hasProperty && hasValue;
+  return hasProperty;
 }
 
 module.exports = {

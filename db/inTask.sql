@@ -87,3 +87,138 @@ SELECT * FROM users_photo ORDER BY user_id;
 
 --UPDATE users_photo SET user_id = 2 WHERE photo_id = 2;
 
+DELETE FROM tasks;
+DELETE FROM tasks_list;
+DELETE FROM activity;
+DELETE FROM activity_list;
+SELECT * from tasks;
+SELECT * from tasks_list;
+SELECT * from activity WHERE task_id = 'OB0lOGGV';
+SELECT * from activity_list;
+SELECT * from context;
+
+SELECT * from activity_list;
+SELECT * from activity WHERE task_id = 'OB0lOGGV';
+WITH RECURSIVE main_visible_groups AS (
+		SELECT group_id FROM groups_list AS gl
+		LEFT JOIN groups AS grp ON gl.group_id = grp.id
+		WHERE (grp.reading >= gl.user_type)
+			AND (grp.el_reading >= gl.user_type)
+			AND (gl.user_id = 0 OR gl.user_id = 1)
+		) 
+		SELECT al.id, al.group_id, al.user_id, act.task_id, al.type_el,
+			act.name, act.note, act.productive,
+			act.part, act.status, act.owner, act.start, act.ends
+		FROM activity_list AS al
+		LEFT JOIN activity AS act ON al.id = act.id
+		--LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
+		WHERE al.group_id IN (SELECT * FROM main_visible_groups) AND (al.type_el & 2 > 0)  AND act.task_id = 'OB0lOGGV'
+		ORDER BY act.start;
+
+
+SELECT id, parent, 1 depth, ARRAY[id] FROM tasks WHERE parent is null;
+SELECT t.id, t.parent, t.id FROM tasks t
+
+WITH RECURSIVE descendants(id, parent, depth, path) AS (
+			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM tasks WHERE parent is null
+		UNION
+			SELECT t.id, t.parent, d.depth + 1, path::varchar || t.id::varchar FROM tasks t
+			JOIN descendants d ON t.parent = d.id
+		)
+		SELECT * FROM descendants;
+
+
+
+WITH RECURSIVE descendants as (
+	SELECT id as descendant, parent, 1 as depth FROM tasks
+	UNION all
+	SELECT s.id, d.parent, d.depth + 1
+	FROM descendants as d
+	JOIN tasks as s on d.descendant = s.parent
+) 
+SELECT * from descendants order by parent, depth, descendant;
+SELECT max(depth) as depth, descendant, parent as parent_id FROM descendants group by descendant, parent
+--SELECT * from descendants order by parent, level, descendant;
+--SELECT max(depth) as depth, descendant as parent_id from descendants group by descendant
+SELECT max(depth) AS depth, parent AS parent_id	FROM descendants GROUP BY parent
+
+
+WITH RECURSIVE main_visible_groups AS (
+		SELECT group_id FROM groups_list AS gl
+			LEFT JOIN groups AS grp ON gl.group_id = grp.id
+			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
+		), descendants as (
+			SELECT id as descendant, parent , 1 as depth FROM tasks
+			UNION all
+			SELECT s.id, d.parent, d.depth + 1
+			FROM descendants as d
+			JOIN tasks as s on d.descendant = s.parent
+		), acts(duration, task_id) AS (
+			SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+				act.task_id FROM activity_list AS al
+			JOIN activity AS act ON (act.id = al.id)
+			WHERE (al.user_id = 1)
+				AND (al.group_id IN (SELECT * FROM main_visible_groups))
+				AND (act.status = 1 OR act.status = 5)
+			GROUP BY act.task_id
+		)
+		SELECT tl.task_id, tl.group_id, tl.p, tl.q,
+			tsk.tid, tsk.name, tsk.owner AS tskowner,
+			act.status, tsk.note, tsk.parent,
+			(SELECT COUNT(*) FROM tasks WHERE parent = tsk.id) AS havechild,
+			(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
+			act.start, dsc.depth
+		FROM tasks_list AS tl
+		RIGHT JOIN tasks AS tsk ON tl.task_id = tsk.id
+		JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
+		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
+		JOIN (SELECT max(depth) AS depth, descendant AS parent_id
+					FROM descendants GROUP BY descendant) AS dsc ON tl.task_id = dsc.parent_id
+		WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND tsk.parent is null
+		ORDER BY tl.group_id, (tl.p::float8/tl.q);
+
+SELECT sum(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration, act.task_id from activity_list as al
+JOIN activity as act On (act.id = al.id)
+WHERE (al.user_id = 1) AND (act.status = 1 OR act.status = 5)
+GROUP BY act.task_id
+
+	SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+				act.task_id FROM activity_list AS al
+			JOIN activity AS act ON (act.id = al.id)
+			WHERE (al.user_id = 1)
+				--AND (al.group_id IN (SELECT * FROM main_visible_groups))
+				AND (act.status = 1 OR act.status = 5)
+			GROUP BY act.task_id
+
+WITH RECURSIVE main_visible_groups AS (
+		SELECT group_id FROM groups_list AS gl
+			LEFT JOIN groups AS grp ON gl.group_id = grp.id
+			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
+		) , descendants(id, parent, depth, path) AS (
+			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM tasks WHERE parent is null
+		UNION
+			SELECT t.id, t.parent, d.depth + 1, path::varchar[] || t.id::varchar FROM tasks t
+			JOIN descendants d ON t.parent = d.id
+		), acts(duration, task_id) AS (
+			SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+				act.task_id FROM activity_list AS al
+			JOIN activity AS act ON (act.id = al.id)
+			WHERE (al.user_id = 1)
+				AND (al.group_id IN (SELECT * FROM main_visible_groups))
+				AND (act.status = 1 OR act.status = 5)
+			GROUP BY act.task_id
+		)
+		SELECT tl.task_id, tl.group_id, tl.p, tl.q,
+			tsk.tid, tsk.name, tsk.owner AS tskowner,
+			act.status, tsk.note, tsk.parent,
+			(SELECT COUNT(*) FROM tasks WHERE parent = tsk.id) AS havechild,
+			(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
+			dsc.depth, act.start
+		FROM tasks_list AS tl
+		RIGHT JOIN tasks AS tsk ON tl.task_id = tsk.id
+		JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
+		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
+		JOIN (SELECT max(depth) AS depth, descendants.path[1] AS parent_id
+					FROM descendants GROUP BY descendants.path[1]) AS dsc ON tl.task_id = dsc.parent_id
+		WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND tsk.parent is null
+		ORDER BY tl.group_id, (tl.p::float8/tl.q);

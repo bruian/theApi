@@ -1,10 +1,11 @@
 CREATE TABLE context (
   id char(8) PRIMARY KEY,
   value varchar(1024),
-  CONSTRAINT cont_id UNIQUE(id)
+  CONSTRAINT cont_id UNIQUE(id, value)
 );
 
 CREATE TRIGGER trigger_context_genid BEFORE INSERT ON context FOR EACH ROW EXECUTE PROCEDURE unique_short_id();
+CREATE UNIQUE INDEX ON context (value);
 
 CREATE TABLE context_list (
   task_id char(8), 
@@ -97,6 +98,12 @@ BEGIN
   END;
 $f$;
 
+select * from context;
+select * from tasks;
+DELETE FROM context;
+SELECT add_task_context(1, 'zQB6Bmz_', null, 'Home');
+INSERT INTO context (value) VALUES ('Home') ON CONFLICT(value) DO NOTHING RETURNING (id) ;
+
 /* ADD context to task */
 CREATE OR REPLACE FUNCTION add_task_context (
 	main_user_id integer,
@@ -162,12 +169,12 @@ BEGIN
 
 	SELECT cl.task_id INTO tmp_id FROM context_list AS cl WHERE cl.task_id = _task_id AND cl.context_id = inner_context_id;
 	IF NOT FOUND THEN
-	  INSERT INTO context_list (task_id, _context_id) VALUES (_task_id, inner_context_id);
+	  INSERT INTO context_list (task_id, context_id) VALUES (_task_id, inner_context_id);
 	END IF;
 
 	SELECT cs.context_id INTO tmp_id FROM context_setting AS cs WHERE cs.context_id = inner_context_id AND cs.user_id = main_user_id;
 	IF NOT FOUND THEN
-	  INSERT INTO context_setting (_context_id, user_id) VALUES (inner_context_id, main_user_id);
+	  INSERT INTO context_setting (context_id, user_id) VALUES (inner_context_id, main_user_id);
 	END IF;
 
 	RETURN inner_context_id;

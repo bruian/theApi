@@ -11,8 +11,9 @@ const pg = require('../db/postgres');
  * 	limit: Number, offset: Number }
  */
 async function getContexts(conditions) {
-  let limit = 'null';
-  let offset = 'null';
+  let pgPortions = '';
+  let limit = 30;
+  let offset = 0;
   let pgTaskCondition = '';
   let pgContextCondition = '';
   let pgLike = '';
@@ -24,14 +25,15 @@ async function getContexts(conditions) {
     params.push(conditions.mainUser_id);
 
     if (conditionMustSet(conditions, 'limit')) {
-      limit = `LIMIT ${conditions.limit}`;
-      params.push(conditions.limit);
+      limit = Number(conditions.limit);
     }
 
     if (conditionMustSet(conditions, 'offset')) {
-      offset = `OFFSET ${conditions.offset}`;
-      params.push(conditions.offset);
+      offset = Number(conditions.offset);
     }
+    pgPortions = `LIMIT \$${params.length + 1} OFFSET \$${params.length + 2}`;
+    params.push(limit);
+    params.push(offset);
 
     if (conditionMustSet(conditions, 'context_id')) {
       pgContextCondition = ` AND cl.context_id = \$${params.length + 1}`;
@@ -66,7 +68,7 @@ async function getContexts(conditions) {
 			${pgContextCondition}
 			${pgLike}
 		ORDER BY tl.group_id, tl.task_id 
-		${limit} ${offset};`;
+		${pgPortions};`;
 
   const client = await pg.pool.connect();
 
@@ -101,14 +103,14 @@ async function addContext(conditions) {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'task_id');
 
-    conditionMustBeSet(conditions, 'values');
-    conditionMustBeSet(conditions.values, 'context_value');
-    conditionMustBeSet(conditions.values, 'context_id');
+    // conditionMustBeSet(conditions, 'values');
+    conditionMustBeSet(conditions, 'context_value');
+    // conditionMustBeSet(conditions, 'context_id');
   } catch (error) {
     throw error;
   }
 
-  const { value = null, context_id = null } = conditions.values;
+  const { context_value = null, context_id = null } = conditions;
 
   const client = await pg.pool.connect();
 
@@ -120,7 +122,7 @@ async function addContext(conditions) {
       conditions.mainUser_id,
       conditions.task_id,
       context_id,
-      value,
+      context_value,
     ];
 
     const { rows: result } = await client.query(queryText, params);
@@ -168,13 +170,12 @@ async function deleteContext(conditions) {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'task_id');
 
-    conditionMustBeSet(conditions, 'values');
-    conditionMustBeSet(conditions.values, 'context_id');
+    conditionMustBeSet(conditions, 'context_id');
   } catch (error) {
     throw error;
   }
 
-  const { context_id } = conditions.values;
+  const { context_id } = conditions;
 
   const client = await pg.pool.connect();
 

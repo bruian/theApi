@@ -189,8 +189,42 @@ WITH RECURSIVE main_visible_groups AS (
 	WHERE tl.group_id IN (SELECT * FROM main_visible_groups)
 	ORDER BY tl.group_id, (tl.p::float8/tl.q);
 
+/* Рабочая выборка списка задач из модуля tasks.js version 2*/
+WITH RECURSIVE main_visible_groups AS (
+		SELECT group_id FROM groups_list AS gl
+			LEFT JOIN groups AS grp ON gl.group_id = grp.id
+			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
+		) , descendants(id, parent, depth, path) AS (
+			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM tasks WHERE parent is null
+		UNION
+			SELECT t.id, t.parent, d.depth + 1, path::varchar[] || t.id::varchar[] FROM tasks t
+			JOIN descendants d ON t.parent = d.id
+		), acts(duration, task_id) AS (
+			SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+				act.task_id FROM activity_list AS al
+			JOIN activity AS act ON (act.id = al.id)
+			WHERE (al.user_id = 1)
+				AND (al.group_id IN (SELECT * FROM main_visible_groups))
+				AND (act.status = 1 OR act.status = 5)
+			GROUP BY act.task_id
+		)
+		SELECT tl.task_id, tl.group_id, tl.p, tl.q,
+			tsk.tid, tsk.name, tsk.owner AS tskowner,
+			act.status, tsk.note, tsk.parent,
+			(SELECT COUNT(*) FROM tasks WHERE parent = tsk.id) AS havechild,
+			(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
+			dsc.depth, act.start
+		FROM tasks_list AS tl
+		RIGHT JOIN tasks AS tsk ON tl.task_id = tsk.id
+		JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
+		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
+		JOIN (SELECT max(depth) AS depth, descendants.path[1] AS parent_id
+					FROM descendants GROUP BY descendants.path[1]) AS dsc ON tl.task_id = dsc.parent_id
+		WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND tsk.parent is Null
+		ORDER BY tl.group_id, (tl.p::float8/tl.q) LIMIT 10 OFFSET 0
+
 /* TEST OPERATIONS for add_task */
-SELECT add_task(1, 1, 0);
+SELECT add_task(1, 'qJo_5F_Y', '0', TRUE);
 SELECT * from tasks;
 SELECT * from tasks_list;
 DELETE FROM tasks WHERE id = 9;
@@ -244,14 +278,14 @@ BEGIN
 	SELECT count(id) INTO tid FROM tasks WHERE (owner = main_user_type);
 	tid := tid + 1;
 
-	INSERT INTO tasks (tid, name, owner, status, duration, note, parent)
-		VALUES (tid, '', main_user_type, 0, 0, '', _parent_id)
-		RETURNING id INTO task_id;
-
 	parent := _parent_id;
 	IF _parent_id = '0' THEN
 		parent := null;
 	END IF;
+
+	INSERT INTO tasks (tid, name, owner, note, parent)
+		VALUES (tid, '', main_user_type, '', parent)
+		RETURNING id INTO task_id;
 
 	PERFORM task_place_list(_group_id, task_id, parent, NOT _isStart);
 

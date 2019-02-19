@@ -1,6 +1,6 @@
 const rc = require('rc');
 
-module.exports = rc('JWT', {
+module.exports = rc('API', {
   host: '127.0.0.1',
   port: process.env.PORT || 3000,
   debug: !(process.env.NODE_ENV === 'production'),

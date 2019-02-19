@@ -38,18 +38,17 @@ async function getGroups(conditions) {
   let selectGroup = false;
   let pgLikeCondition = '';
   // let pgUserTypeCondition = '';
+  let pgPortions = '';
+  let limit = 30;
+  let offset = 0;
   let whose = '';
   let queryText = '';
   const params = [];
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
-    conditionMustBeSet(conditions, 'limit');
-    conditionMustBeSet(conditions, 'offset');
 
     params.push(conditions.mainUser_id); // $1
-    params.push(conditions.limit); // $2
-    params.push(conditions.offset); // $3
 
     // По-умолчанию выборка по всем группам, где владелец не main_user
     // whose = ` AND grp.owner != $1`;
@@ -74,6 +73,17 @@ async function getGroups(conditions) {
       pgLikeCondition = ` AND (grp.name ILIKE '%\$${params.length + 1}%')`;
       params.push(conditions.like);
     }
+
+    if (conditionMustSet(conditions, 'limit')) {
+      limit = Number(conditions.limit);
+    }
+
+    if (conditionMustSet(conditions, 'offset')) {
+      offset = Number(conditions.offset);
+    }
+    pgPortions = `LIMIT \$${params.length + 1} OFFSET \$${params.length + 2}`;
+    params.push(limit);
+    params.push(offset);
   } catch (error) {
     throw error;
   }
@@ -113,7 +123,7 @@ async function getGroups(conditions) {
 				AND (grp.reading >= gl.user_type)
 				AND (gl.user_id = 0 OR gl.user_id = $1)
 				${pgLikeCondition}
-		LIMIT $2 OFFSET $3;`;
+		${pgPortions};`;
   }
 
   const client = await pg.pool.connect();
