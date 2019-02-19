@@ -2,14 +2,14 @@ const rc = require('rc');
 
 module.exports = rc('API', {
   host: '127.0.0.1',
-  port: process.env.PORT || 3000,
+  port: process.env.API_PORT || 3000,
   debug: !(process.env.NODE_ENV === 'production'),
   author: 'bruianio@gmail.com',
   companyEmail: 'hello@inTask.me',
-  logFile: process.env.LOG_FILE,
+  logFile: process.env.API_LOG,
   version: '0.0.2',
   postgres: {
-    database: process.env.PG_BASE,
+    database: process.env.API_BASE,
     user: process.env.PG_USER,
     password: process.env.POSTGRES_PASSWORD,
     port: process.env.PG_PORT,
