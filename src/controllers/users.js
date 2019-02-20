@@ -56,12 +56,12 @@ async function getOrCreateUser(conditions) {
       null AS gender, null AS phone, null AS avatar;`;
     const { rows: users } = await client.query(queryText, params);
 
-    params = [conditions.mainUser_id, 'personal'];
-    queryText = `INSERT INTO groups (name, owner) VALUES ($2, $1) RETURNING id;`;
+    params = [conditions.mainUser_id];
+    queryText = `select add_group($1, null, 1, true);`;
     const { rows: groups } = await client.query(queryText, params);
 
-    params = [conditions.mainUser_id, groups[0].id];
-    queryText = `INSERT INTO groups_list (user_id, group_id) VALUES ($1, $2);`;
+    params = [groups[0].add_group];
+    queryText = `UPDATE groups SET name = 'personal' WHERE (id = $1);`;
     await client.query(queryText, params);
 
     params = [conditions.mainUser_id];

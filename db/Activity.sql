@@ -209,7 +209,7 @@ CREATE OR REPLACE FUNCTION activity_renormalize (
 )
 RETURNS void LANGUAGE plpgsql volatile strict AS $f$
 BEGIN
-  perform 1 FROM groups g WHERE g.id = _group_id FOR UPDATE;
+  perform 1 FROM activity_list al WHERE al.group_id = _group_id FOR UPDATE;
 
 	UPDATE activity_list al SET p = s2.new_rnum, q = 2
 	FROM (

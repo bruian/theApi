@@ -26,10 +26,344 @@ CREATE TRIGGER trigger_groups_genid BEFORE INSERT ON groups FOR EACH ROW EXECUTE
 /* Create groups list table */
 CREATE TABLE groups_list (
 	user_id int, 
-	group_id char(8), 
+	group_id char(8),
+	p INTEGER NOT NULL, q INTEGER NOT NULL,
 	user_type smallint DEFAULT 1
 );
 
+CREATE INDEX ON groups_list (user_id, group_id);
+
+DELETE FROM activity;
+DELETE FROM activity_list;
+DELETE FROM groups;
+DELETE FROM groups_list;
+DELETE FROM tasks;
+DELETE FROM tasks_list;
+
+select add_group(1, '0ZfgI7KW', 2, true);
+select * from groups;
+select * from groups_list;
+
+UPDATE groups SET parent = null WHERE (id = 'sc8d17O_');
+
+/* Create new group in groups table, and add it in groups_list table 
+	group_type = {
+		primary = 1, - it's default groups (user can't delete its) 
+		secondary = 2, - it's user created groups
+		shared = 3, - it's shared groups
+	}
+*/
+CREATE OR REPLACE FUNCTION add_group (
+	main_user_id integer,
+	_parent_id 	 char(8),
+	_group_type  integer,
+	_isStart 		 boolean
+)
+RETURNS text LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $f$
+DECLARE
+	group_id char(8);
+	parent 	 char(8);
+BEGIN
+	parent := _parent_id;
+	IF _parent_id = '0' THEN
+		parent := null;
+	END IF;
+
+	INSERT INTO groups (parent, name, group_type, owner)
+		VALUES (parent, '', _group_type, main_user_id)
+		RETURNING id INTO group_id;
+
+	PERFORM group_place_list(main_user_id, group_id, parent, NOT _isStart);
+
+	RETURN group_id;
+END;
+$f$;
+
+/* Delete group in groups table, and add it in groups_list table */
+CREATE OR REPLACE FUNCTION delete_group (
+	main_user_id 		integer,
+	_group_id 			char(8),
+	_isOnlyFromList boolean
+)
+RETURNS text LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $f$
+DECLARE
+	main_user_type 		  integer;
+	main_group_reading  integer;
+	main_group_deleting integer;
+	countchild 				  integer;
+	group_type          integer;
+BEGIN
+	SELECT gl.user_type, g.reading, g.deleting, g.group_type
+		INTO main_user_type, main_group_reading, main_group_deleting, group_type FROM groups_list AS gl
+	LEFT JOIN groups AS g ON gl.group_id = g.id
+	WHERE (gl.user_id = main_user_id OR gl.user_id is null) AND (gl.group_id = _group_id);
+
+	IF NOT FOUND THEN
+	  RAISE EXCEPTION 'Group for main user not found';
+	END IF;
+
+	IF main_group_reading < main_user_type THEN
+	  RAISE EXCEPTION 'No rights to read the group';
+	END IF;
+
+	IF main_group_deleting < main_user_type THEN
+	  RAISE EXCEPTION 'No rights to delete the group';
+	END IF;
+
+	IF group_type = 1 THEN
+		RAISE EXCEPTION 'Can not delete default group';
+	END IF;
+
+	SELECT count(id) INTO countchild FROM groups WHERE parent = _group_id;
+	IF countchild > 0 THEN
+	  RAISE EXCEPTION 'Can not delete. Group have subelement';
+	END IF;
+
+	IF _isOnlyFromList = TRUE THEN
+	  DELETE FROM groups_list WHERE (group_id = _group_id) AND (user_id = main_user_id);
+	  UPDATE groups SET parent = null WHERE (id = _group_id);
+	ELSE
+	  DELETE FROM groups_list WHERE (group_id = _group_id);
+	  DELETE FROM groups WHERE (id = _group_id);
+	END IF;
+
+	RETURN _group_id;
+END;
+$f$;
+
+/**
+ * @func reorder_group
+ * @param {integer} mainUser_id - идентификатор текущего пользователя
+ * @param {char(8)} _group_id - идентификатор элемента перемещаемой группы
+ * @param {char(8)} _relation_id - идентификатор элемента на который перемещается группа
+ * @param {boolean} _is_before - признак помещения элемента в начало(true) или конец(false) списка
+ * @param {char(8)} _parent - идентификатор родителя если такой меняется, null если не меняется
+ * @return {integer} Признак завершения операции. 1 - перемещение удачно, 2 - сменилась группа
+ * @description Обновляет положение элемента в списке задач, пересчитывает значения p и q,
+ * если меняется группа, то меняет значения группы у элемента
+ * Список ошибок, что выплевывает функция:
+ * 0 - moving a record to its own position is a no-op
+ * 1 - user is not assigned this group or this group no public
+ * 2 - user does not have permissions to read this group
+ * 3 - user does not have permissions to updating this group
+*/
+CREATE OR REPLACE FUNCTION reorder_group (
+	main_user_id integer,
+	_group_id 	 char(8),
+  _relation_id char(8),
+  _is_before 	 boolean,
+	_parent 		 char(8)
+) RETURNS integer LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $f$
+DECLARE
+	before_group_id 		char(8);
+	before_parent_id 		char(8);
+	main_group_id 			char(8);
+	main_group_reading 	integer;
+	main_group_updating	integer;
+	main_user_type 			integer;
+	rel_group_id 				char(8);
+BEGIN
+	/* Выборка доступной пользователю группы для проверки прав на операции с ней,
+		где user_id is null это группы общие для всех пользователей */
+	SELECT group_id, grp.reading, grp.updating, gl.user_type
+	  INTO main_group_id, main_group_reading, main_group_updating, main_user_type
+	FROM groups_list gl
+	LEFT JOIN groups grp ON gl.group_id = grp.id
+  WHERE gl.group_id = _group_id AND (gl.user_id is null OR gl.user_id = main_user_id);
+
+	/* Нет результатов выборки, а значит и группа не доступна пользователю */
+	IF NOT FOUND THEN
+		RAISE EXCEPTION 'User is not assigned this group or this group no public';
+	END IF;
+
+	IF main_group_id IS NULL THEN
+		RAISE EXCEPTION 'User is not assigned this group or this group no public';
+	END IF;
+
+	IF _parent = '0' THEN
+		_parent := null;
+	END IF;
+
+	/* Проверка прав доступа на чтение группы. Анализ прав происходит по следующему принципу
+		из groups_list извлекается тип пользователя user_type, который может иметь 3 значения:
+			1 - owner (владелец)
+			2 - curator (куратор группы)
+			3 - member (член группы)
+			4 - all (все остальные)
+		значения этого типа сравниваются с "атрибутами доступа" извлеченными из groups, это
+		groups.reading и groups.el_updating
+		сравнение происходит по принципу, атрибуты доступа совпадающие с user_type - это разрешающие
+		например: groups.reading = 1 значит, что доступ есть только у пользователя с user_type = 1
+	*/
+	IF main_group_reading < main_user_type THEN
+	  RAISE EXCEPTION 'User does not have permissions to read this group';
+	END IF;
+
+	IF main_group_updating < main_user_type THEN
+		RAISE EXCEPTION 'User does not have permissions to updating this group';
+	END IF;
+
+	/* Получение предыдущих значений группы и родителя */
+	SELECT gl.group_id, g.parent INTO strict before_group_id, before_parent_id FROM groups_list AS gl
+	LEFT JOIN groups AS g ON g.id = gl.group_id
+	WHERE (gl.group_id = _group_id) AND (gl.user_id = main_user_id)
+	GROUP BY gl.group_id, g.parent;
+
+	/* Сравнение родителей у старой и новой позиции, если поменялись, то необходимо обновить */
+	-- IF _parent IS NOT NULL THEN
+		IF COALESCE(_parent, '0') <> COALESCE(before_parent_id, '0') THEN
+			UPDATE groups SET parent = _parent WHERE id = _group_id;
+		END IF;
+	-- END IF;
+
+	/* Обработка перемещения элемента в списке groups_list, тут важно организовать правильное
+		положение элемента в списке (то что задал пользователь), для этого используется частное
+		от деления полей p/q, где получается дробное число и сортировка происходит в порядке
+		дробных значений. Алгоритм: Дерево Штерна-Брока.
+		_relation_id - входящий параметр, означает элемент на который помещается "перемещаемый
+		элемент", может иметь значение null это значит что "перемещаемый элемент" помещается в
+		начало или конец списка (регулируется параметром _is_before)
+	*/
+	perform group_place_list(main_user_id, _group_id, _relation_id, _is_before);
+
+	/* Возвращается единичка, как признак, что все нормально поменялось */
+	return 1;
+END;
+$f$;
+
+-- вставить или переместить запись GRP_ID
+-- после REL_ID если IS_BEFORE=true, в противном случае до REL_ID.
+-- REL_ID может иметь значени NULL, что указывает позицию конца списка.
+CREATE OR REPLACE FUNCTION group_place_list (
+	usr_id integer,
+	grp_id char(8),
+  rel_id char(8),
+  is_before boolean
+) RETURNS void LANGUAGE plpgsql volatile called ON NULL INPUT AS $f$
+DECLARE
+  p1 INTEGER; q1 INTEGER;   -- fraction below insert position | дробь позже вставляемой позиции
+  p2 INTEGER; q2 INTEGER;   -- fraction above insert position | дробь раньше вставляемой позиции
+  r_rel DOUBLE PRECISION;   -- p/q of the rel_id row			| p/q значение rel_id строки
+  np INTEGER; nq INTEGER;   -- new insert position fraction
+BEGIN
+	-- perform выполняет select без возврата результата
+	-- lock the groups
+	perform 1 FROM groups g WHERE g.id=grp_id FOR UPDATE;
+
+	-- moving a record to its own position is a no-op
+	IF rel_id=grp_id THEN RETURN; END IF;
+
+	-- if we're positioning next to a specified row, it must exist
+	IF rel_id IS NOT NULL THEN
+		SELECT gl.p, gl.q INTO strict p1, q1
+			FROM groups_list gl
+			WHERE gl.user_id=usr_id AND gl.group_id=rel_id;
+		r_rel := p1::float8 / q1;
+	END IF;
+
+	-- find the next adjacent row in the desired direction
+	-- (might not exist).
+	IF is_before THEN
+		p2 := p1; q2 := q1;
+		SELECT gl2.p, gl2.q INTO p1, q1
+			FROM groups_list gl2
+			WHERE gl2.user_id=usr_id AND gl2.group_id <> grp_id
+				AND (p::float8/q) < COALESCE(r_rel, 'infinity')
+			ORDER BY (p::float8/q) DESC LIMIT 1;
+	ELSE
+		SELECT gl2.p, gl2.q INTO p2, q2
+			FROM groups_list gl2
+			WHERE gl2.user_id=usr_id AND gl2.group_id <> grp_id
+				AND (p::float8/q) > COALESCE(r_rel, 0)
+			ORDER BY (p::float8/q) ASC LIMIT 1;
+	END IF;
+
+	-- compute insert fraction
+	SELECT * INTO np, nq FROM find_intermediate(COALESCE(p1, 0), COALESCE(q1, 1),
+																							COALESCE(p2, 1), COALESCE(q2, 0));
+
+	-- move or insert the specified row
+	UPDATE groups_list
+		SET (p,q) = (np,nq) WHERE user_id=usr_id AND group_id=grp_id;
+	IF NOT found THEN
+		INSERT INTO groups_list VALUES (usr_id, grp_id, np, nq);
+	END IF;
+
+	-- want to renormalize both to avoid possibility of integer overflow
+	-- and to ensure that distinct fraction values map to distinct float8
+	-- values. Bounding to 10 million gives us reasonable headroom while
+	-- not requiring frequent normalization.
+
+	IF (np > 10000000) OR (nq > 10000000) THEN
+		perform grp_renormalize(grp_id);
+	END IF;
+END;
+$f$;
+
+-- Renormalize the fractions of items in GRP_ID, preserving the
+-- existing order. The new fractions are not strictly optimal, but
+-- doing better would require much more complex calculations.
+--
+-- the purpose of the complex update is as follows: we want to assign
+-- a new series of values 1/2, 3/2, 5/2, ... to the existing rows,
+-- maintaining the existing order, but because the unique expression
+-- index is not deferrable, we want to avoid assigning any new value
+-- that collides with an existing one.
+--
+-- We do this by calculating, for each existing row with an x/2 value,
+-- which position in the new sequence it would appear at. This is done
+-- by adjusting the value of p downwards according to the number of
+-- earlier values in sequence. To see why, consider:
+--
+--   existing values:    3, 9,13,15,23
+--   new simple values:  1, 3, 5, 7, 9,11,13,15,17,19,21
+--                          *     *  *        *
+--   adjusted values:    1, 5, 7,11,17,19,21,25,27,29,31
+--
+--   points of adjustment: 3, 7 (9-2), 9 (13-4, 15-6), 15 (23-8)
+--
+-- The * mark the places where an adjustment has to be applied.
+--
+-- Having calculated the adjustment points, the adjusted value is
+-- simply the simple value adjusted upwards according to the number of
+-- points passed (counting multiplicity).
+CREATE OR REPLACE FUNCTION grp_renormalize(usr_id integer)
+RETURNS void LANGUAGE plpgsql volatile strict AS $f$
+BEGIN
+	perform 1 FROM groups_list gl WHERE gl.user_id=usr_id FOR UPDATE;
+
+	UPDATE groups_list gl SET p=s2.new_rnum, q=2
+		FROM (SELECT group_id,
+									is_existing = 0 AS is_new,
+									-- increase the current value according to the
+									-- number of adjustment points passed
+									rnum + 2*(SUM(is_existing) OVER (ORDER BY rnum)) AS new_rnum
+						FROM (
+									-- assign the initial simple values to every item
+									-- in order
+									SELECT group_id,
+													2*(ROW_NUMBER() OVER (ORDER BY p::float8/q)) - 1
+														AS rnum,
+													0 AS is_existing
+										FROM groups_list gl2
+										WHERE gl2.user_id=usr_id
+									UNION ALL
+									-- and merge in the adjustment points required to
+									-- skip over existing x/2 values
+									SELECT group_id,
+													p + 2 - 2*(COUNT(*) OVER (ORDER BY p))
+														AS rnum,
+													1 AS is_existing
+										FROM groups_list gl3
+										WHERE gl3.user_id=usr_id
+											AND gl3.q=2
+									) s1
+					) s2
+		WHERE s2.group_id=gl.group_id
+			AND s2.is_new
+			AND gl.user_id=usr_id;
+END;
+$f$;
 /* Select user groups
 SELECT * FROM groups_list, groups 
 WHERE (groups_list.group_id = groups.id) 

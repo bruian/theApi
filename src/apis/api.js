@@ -144,7 +144,7 @@ router.get('/groups', jwtMiddleware(), async ctx => {
   try {
     const data = await GroupController.getGroups(condition);
     logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data, packet: condition.packet };
+    ctx.body = { action: 'getGroups', data, packet: condition.packet };
   } catch (error) {
     log.warn(
       `/groups get|-> status:${error.jse_info.status} | message:${
@@ -171,7 +171,7 @@ router.post('/groups', jwtMiddleware(), async ctx => {
   try {
     const data = await GroupController.createGroup(condition);
     logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data };
+    ctx.body = { action: 'createGroup', data };
   } catch (error) {
     log.warn(
       `/groups post |-> status:${error.jse_info.status} | message:${
@@ -198,10 +198,65 @@ router.del('/groups', jwtMiddleware(), async ctx => {
   try {
     const data = await GroupController.removeGroup(condition);
     logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data };
+    ctx.body = { action: 'removeGroup', data };
   } catch (error) {
     log.warn(
       `/groups delete |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/**
+ * @func router.put('/groups')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "updateGroup" and responce data: JSON
+ */
+router.put('/groups', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+
+  try {
+    const data = await GroupController.updateGroup(condition);
+    logRequest(timeStart, ctx, condition, data);
+    ctx.body = { action: 'updateGroup', data };
+  } catch (error) {
+    log.warn(
+      `/groups put |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/**
+ * @func router.put('/groups/order')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "updatePosition" and responce data: JSON
+ */
+router.put('/groups/order', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+
+  try {
+    const data = await GroupController.updatePosition(condition);
+    logRequest(timeStart, ctx, condition, data);
+
+    ctx.body = { action: 'updatePosition', data };
+  } catch (error) {
+    log.warn(
+      `/groups/order put |-> status:${error.jse_info.status} | message:${
         error.message
       }`,
     );

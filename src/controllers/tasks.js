@@ -231,6 +231,7 @@ async function createTask(conditions) {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'parent_id');
     conditionMustBeSet(conditions, 'group_id');
+
     if (conditionMustSet(conditions, 'isStart')) {
       isStart =
         typeof conditions.isStart === 'boolean'

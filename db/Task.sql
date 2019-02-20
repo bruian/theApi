@@ -275,7 +275,7 @@ BEGIN
 	  RAISE EXCEPTION 'No rights to create the task in the group';
 	END IF;
 
-	SELECT count(id) INTO tid FROM tasks WHERE (owner = main_user_type);
+	SELECT count(id) INTO tid FROM tasks WHERE (owner = main_user_id);
 	tid := tid + 1;
 
 	parent := _parent_id;
@@ -284,7 +284,7 @@ BEGIN
 	END IF;
 
 	INSERT INTO tasks (tid, name, owner, note, parent)
-		VALUES (tid, '', main_user_type, '', parent)
+		VALUES (tid, '', main_user_id, '', parent)
 		RETURNING id INTO task_id;
 
 	PERFORM task_place_list(_group_id, task_id, parent, NOT _isStart);
@@ -390,11 +390,11 @@ DECLARE
 BEGIN
 	/* Выборка доступной пользователю группы для проверки прав на операции с ней,
 		где user_id = 0 это группы общие для всех пользователей */
-	SELECT group_id, grp.reading, grp.updating, gl.user_type
+	SELECT group_id, grp.reading, grp.el_updating, gl.user_type
 	  INTO main_group_id, main_group_reading, main_el_updating, main_user_type
 	FROM groups_list gl
 	LEFT JOIN groups grp ON gl.group_id = grp.id
-  WHERE gl.group_id = _group_id AND (gl.user_id = 0 OR gl.user_id = main_user_id);
+  WHERE gl.group_id = _group_id AND (gl.user_id is null OR gl.user_id = main_user_id);
 
 	/* Нет результатов выборки, а значит и группа не доступна пользователю */
 	IF NOT FOUND THEN
@@ -491,7 +491,7 @@ $f$;
 
 -- вставить или переместить запись TSK_ID в группе GRP_ID,
 -- после REL_ID если IS_BEFORE=true, в противном случае до REL_ID.
--- REL_ID может иметь значени NULL, что указывает позицию конеца списка.
+-- REL_ID может иметь значени NULL, что указывает позицию конца списка
 CREATE OR REPLACE FUNCTION task_place_list (
 	grp_id char(8),
   tsk_id char(8),
@@ -501,7 +501,7 @@ CREATE OR REPLACE FUNCTION task_place_list (
 DECLARE
   p1 INTEGER; q1 INTEGER;   -- fraction below insert position | дробь позже вставляемой позиции
   p2 INTEGER; q2 INTEGER;   -- fraction above insert position | дробь раньше вставляемой позиции
-  r_rel DOUBLE PRECISION;   -- p/q of the rel_id row			| p/q значение rel_id строки
+  r_rel DOUBLE PRECISION;   -- p/q of the rel_id row					| p/q значение rel_id строки
   np INTEGER; nq INTEGER;   -- new insert position fraction
 BEGIN
 	-- perform выполняет select без возврата результата
@@ -553,7 +553,75 @@ BEGIN
 	-- not requiring frequent normalization.
 
 	IF (np > 10000000) OR (nq > 10000000) THEN
-		perform grp_renormalize(grp_id);
+		perform tsk_renormalize(grp_id);
 	END IF;
 END;
+$f$;
+
+-- Renormalize the fractions of items in GRP_ID, preserving the
+-- existing order. The new fractions are not strictly optimal, but
+-- doing better would require much more complex calculations.
+--
+-- the purpose of the complex update is as follows: we want to assign
+-- a new series of values 1/2, 3/2, 5/2, ... to the existing rows,
+-- maintaining the existing order, but because the unique expression
+-- index is not deferrable, we want to avoid assigning any new value
+-- that collides with an existing one.
+--
+-- We do this by calculating, for each existing row with an x/2 value,
+-- which position in the new sequence it would appear at. This is done
+-- by adjusting the value of p downwards according to the number of
+-- earlier values in sequence. To see why, consider:
+--
+--   existing values:    3, 9,13,15,23
+--   new simple values:  1, 3, 5, 7, 9,11,13,15,17,19,21
+--                          *     *  *        *
+--   adjusted values:    1, 5, 7,11,17,19,21,25,27,29,31
+--
+--   points of adjustment: 3, 7 (9-2), 9 (13-4, 15-6), 15 (23-8)
+--
+-- The * mark the places where an adjustment has to be applied.
+--
+-- Having calculated the adjustment points, the adjusted value is
+-- simply the simple value adjusted upwards according to the number of
+-- points passed (counting multiplicity).
+CREATE OR REPLACE FUNCTION tsk_renormalize(grp_id char(8))
+  RETURNS void
+  LANGUAGE plpgsql
+  volatile strict
+AS $f$
+  BEGIN
+    perform 1 FROM tasks_list tl WHERE tl.group_id=grp_id FOR UPDATE;
+
+    UPDATE tasks_list tl SET p=s2.new_rnum, q=2
+      FROM (SELECT task_id,
+                   is_existing = 0 AS is_new,
+                   -- increase the current value according to the
+                   -- number of adjustment points passed
+                   rnum + 2*(SUM(is_existing) OVER (ORDER BY rnum)) AS new_rnum
+              FROM (
+                    -- assign the initial simple values to every item
+		    -- in order
+                    SELECT task_id,
+                           2*(ROW_NUMBER() OVER (ORDER BY p::float8/q)) - 1
+                             AS rnum,
+                           0 AS is_existing
+                      FROM tasks_list tl2
+                     WHERE tl2.group_id=grp_id
+                    UNION ALL
+                    -- and merge in the adjustment points required to
+                    -- skip over existing x/2 values
+                    SELECT task_id,
+                           p + 2 - 2*(COUNT(*) OVER (ORDER BY p))
+                             AS rnum,
+                           1 AS is_existing
+                      FROM tasks_list tl3
+                     WHERE tl3.group_id=grp_id
+                       AND tl3.q=2
+                   ) s1
+           ) s2
+     WHERE s2.task_id=tl.task_id
+       AND s2.is_new
+       AND tl.group_id=grp_id;
+  END;
 $f$;
