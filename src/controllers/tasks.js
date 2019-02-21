@@ -59,7 +59,7 @@ const pg = require('../db/postgres');
  * @returns {Promise}
  * @description Get tasks from database. If task_id is given, then get one task, else get tasks arr
  * conditions object = { mainUser_id: Number, group_id: char(8), type_el: Number, limit: Number, offset: Number,
- *  like: String, userId: Number, task_id: char(8) }
+ *  like: String, userId: Number, id: char(8) }
  */
 async function getTasks(conditions) {
   let limit = 'null';
@@ -88,7 +88,7 @@ async function getTasks(conditions) {
       selectTask = true;
     }
 
-    if (conditionMustSet(conditions, 'task_id')) {
+    if (conditionMustSet(conditions, 'id')) {
       pgTaskCondition = ` AND tsk.id = \$${params.length + 1}`;
       params.push(conditions.task_id);
       selectTask = true;
@@ -177,7 +177,7 @@ async function getTasks(conditions) {
 				AND (act.status = 1 OR act.status = 5)
 			GROUP BY act.task_id
 		)
-		SELECT tl.task_id, tl.group_id, tl.p, tl.q,
+		SELECT tsk.id, tl.group_id, tl.p, tl.q,
 			tsk.tid, tsk.name, tsk.owner AS tskowner,
 			act.status, tsk.note, tsk.parent,
 			(SELECT COUNT(*) FROM tasks WHERE parent = tsk.id) AS havechild,
@@ -258,7 +258,7 @@ async function createTask(conditions) {
 
     const elementId = newElements[0].add_task;
 
-    queryText = `SELECT tl.task_id, tl.group_id, tl.p, tl.q,
+    queryText = `SELECT tsk.id, tl.group_id, tl.p, tl.q,
 			tsk.tid, tsk.name, tsk.owner AS tskowner, tsk.note, tsk.parent,
 			0 AS status, 0 as duration, 0 AS havechild,	1 as depth
 		FROM tasks_list AS tl
@@ -291,7 +291,7 @@ async function createTask(conditions) {
  * @param {Object} condition - Get from api
  * @returns { function(...args): Promise }
  * @description Update exists <Task> in database
- * conditions object = { mainUser_id: Number,	task_id: char(8) }
+ * conditions object = { mainUser_id: Number,	id: char(8) }
  */
 async function updateTask(conditions) {
   let attributes = '';
@@ -299,10 +299,10 @@ async function updateTask(conditions) {
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
-    conditionMustBeSet(conditions, 'task_id');
+    conditionMustBeSet(conditions, 'id');
 
     params.push(conditions.mainUser_id);
-    params.push(conditions.task_id);
+    params.push(conditions.id);
   } catch (error) {
     throw error;
   }
@@ -377,14 +377,14 @@ async function updateTask(conditions) {
  * @param {Object} condition - Get from api
  * @returns { function(...args): Promise }
  * @description Update exists <Task> in database
- * conditions object = { mainUser_id: Number,	task_id: char(8), group_id: char(8) }
+ * conditions object = { mainUser_id: Number,	id: char(8), group_id: char(8) }
  */
 async function deleteTask(conditions) {
   let onlyFromList = true; //eslint-disable-line
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
-    conditionMustBeSet(conditions, 'task_id');
+    conditionMustBeSet(conditions, 'id');
     conditionMustBeSet(conditions, 'group_id');
   } catch (error) {
     throw error;
@@ -398,7 +398,7 @@ async function deleteTask(conditions) {
     const queryText = `SELECT delete_task($1, $2, $3, $4);`;
     const params = [
       conditions.mainUser_id,
-      conditions.task_id,
+      conditions.id,
       conditions.group_id,
       onlyFromList,
     ];
@@ -428,7 +428,7 @@ async function deleteTask(conditions) {
  * @param {Object} condition - Get from api
  * @returns { function(...args): Promise }
  * @description Set new position in tasks_list OR change group for task
- * conditions object - { mainUser_id: Number,	group_id: char(8), task_id: char(8),
+ * conditions object - { mainUser_id: Number,	group_id: char(8), id: char(8),
  *  parent_id: char(8), position: char(8), isBefore: Boolean }
  */
 async function updatePosition(conditions) {
@@ -439,7 +439,7 @@ async function updatePosition(conditions) {
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'group_id');
-    conditionMustBeSet(conditions, 'task_id');
+    conditionMustBeSet(conditions, 'id');
 
     if (
       conditionMustSet(conditions, 'position') &&
@@ -464,7 +464,7 @@ async function updatePosition(conditions) {
 
   const client = await pg.pool.connect();
 
-  const returnObject = { task_id: conditions.task_id, groupChanged: false };
+  const returnObject = { id: conditions.id, groupChanged: false };
 
   try {
     await client.query('begin');
@@ -473,7 +473,7 @@ async function updatePosition(conditions) {
     const params = [
       conditions.mainUser_id,
       conditions.group_id,
-      conditions.task_id,
+      conditions.id,
       position,
       isBefore,
       parent_id,

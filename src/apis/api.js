@@ -395,7 +395,7 @@ router.post('/tasks', jwtMiddleware(), async ctx => {
 
     condition.status = 0;
     condition.type_el = 2;
-    condition.task_id = tasksData[0].task_id;
+    condition.task_id = tasksData[0].id;
     condition.group_id = tasksData[0].group_id;
 
     const activityData = await ActivityController.createActivity(condition);
@@ -485,7 +485,7 @@ router.put('/tasks/order', jwtMiddleware(), async ctx => {
 
     condition.status = 0;
     condition.type_el = 2;
-    condition.task_id = condition.task_id;
+    condition.task_id = condition.id;
     condition.group_id = condition.group_id;
 
     if (!taskData.groupChanged) {

@@ -2,29 +2,29 @@ const VError = require('verror');
 const { conditionMustBeSet, conditionMustSet } = require('../utils');
 const pg = require('../db/postgres');
 
-function constructHierarchy(rows, parentId) {
-  const hRows = [];
+// function constructHierarchy(rows, parentId) {
+//   const hRows = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const record = Object.assign({}, rows[i]);
-    if (
-      (parentId === null && record.parent === null) ||
-      record.parent === parentId
-    ) {
-      const innerRows = constructHierarchy(rows, record.id);
-      if (innerRows.length > 0) {
-        record.children = innerRows;
-        record.havechild = 1;
-      } else {
-        record.havechild = 0;
-      }
+//   for (let i = 0; i < rows.length; i++) {
+//     const record = Object.assign({}, rows[i]);
+//     if (
+//       (parentId === null && record.parent === null) ||
+//       record.parent === parentId
+//     ) {
+//       const innerRows = constructHierarchy(rows, record.id);
+//       if (innerRows.length > 0) {
+//         record.children = innerRows;
+//         record.havechild = 1;
+//       } else {
+//         record.havechild = 0;
+//       }
 
-      hRows.push(record);
-    }
-  }
+//       hRows.push(record);
+//     }
+//   }
 
-  return hRows;
-}
+//   return hRows;
+// }
 
 /**
  * @func getGroups

@@ -224,7 +224,7 @@
         Content-Type: application/x-www-form-urlencoded
         Headers: "Authorization: Bearer your_access_token"
         query: {
-          task_id: (optional) - task filtering
+          id: (optional) - task filtering
           group_id: (optional) - group filtering,
           parent_id: (optional) - parent filtering,
           type_el: (optional) - type filtering,
@@ -266,7 +266,7 @@
         Headers: "Authorization: Bearer your_access_token"
         query: {
           group_id: (optional) - group filtering,
-          task_id: (required)
+          id: (required)
         }
         return: <i>error</i> or [{
           data
@@ -282,7 +282,7 @@
         Content-Type: application/x-www-form-urlencoded
         Headers: "Authorization: Bearer your_access_token"
         body: {
-          task_id: (required)
+          id: (required)
           group_id: (required)
           position: (optional)
           parent_id: (optional)
@@ -303,7 +303,7 @@
         Content-Type: application/x-www-form-urlencoded
         Headers: "Authorization: Bearer your_access_token"
         body: {
-          task_id: (required)
+          id: (required)
           values: { name, note }
         }
         return: <i>error</i> or [{
