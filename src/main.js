@@ -25,6 +25,8 @@ require('./db/postgres');
 /* Конфигурация приложения */
 const config = require('./config');
 
+const { logger: log } = require('./log');
+
 const apiModule = require('./apis/api');
 
 function createApp() {
@@ -67,6 +69,10 @@ function createApp() {
 
   /* routes() отдает свернутые compose функцией layers, где они подключаются к KOA */
   app.use(router.routes());
+
+  app.on('error', err => {
+    log.error(err);
+  });
 
   return app;
 }

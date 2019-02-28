@@ -26,12 +26,21 @@ const pg = require('../db/postgres');
 //   return hRows;
 // }
 
+/*
+descendants(id, parent, depth, path) AS (
+			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM groups WHERE ${pgParentCondition2}
+		UNION
+			SELECT g.id, g.parent, d.depth + 1, path::varchar[] || g.id::varchar FROM groups g
+			JOIN descendants d ON g.parent = d.id
+    )
+*/
+
 /**
  * @func getGroups
  * @param {Object} - conditions
  * @returns {Promise}
- * @description Get groups from database. If group_id is given, then get one group, else get groups arr
- * conditions object = { mainUser_id: Number, group_id: char(8), limit: Number, offset: Number,
+ * @description Get groups from database. If id is given, then get one group, else get groups arr
+ * conditions object = { mainUser_id: Number, id: char(8), limit: Number, offset: Number,
  *  like: String, userId: Number, parent_id: char(8) }
  */
 async function getGroups(conditions) {
@@ -42,7 +51,6 @@ async function getGroups(conditions) {
   let pgUserGroups = '';
   let pgGroups = 'main_visible_groups'; // groups visible only for main user
   let pgParentCondition = ' AND g.parent is null'; // select Top level groups
-  let pgParentCondition2 = 'parent is null';
   let pgGroupCondition = '';
   let pgSearchText = '';
   let pgLimit = '';
@@ -55,14 +63,13 @@ async function getGroups(conditions) {
 
     if (conditionMustSet(conditions, 'parent_id')) {
       pgParentCondition = ` AND g.parent = \$${params.length + 1}`;
-      pgParentCondition2 = `parent = \$${params.length + 1}`;
       params.push(conditions.parent_id);
       selectGroup = true;
     }
 
-    if (conditionMustSet(conditions, 'group_id')) {
+    if (conditionMustSet(conditions, 'id')) {
       pgGroupCondition = ` AND g.id = \$${params.length + 1}`;
-      params.push(conditions.group_id);
+      params.push(conditions.id);
       selectGroup = true;
     }
 
@@ -124,38 +131,26 @@ async function getGroups(conditions) {
 
   /* $1 = mainUser_id */
   const queryText = `WITH RECURSIVE main_visible_groups AS (
-		  SELECT group_id FROM groups_list AS gl
+		SELECT group_id FROM groups_list AS gl
 			LEFT JOIN groups AS grp ON gl.group_id = grp.id
 			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = $1)
-		) ${pgUserGroups}, descendants(id, parent, depth, path) AS (
-			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM groups WHERE ${pgParentCondition2}
-		UNION
-			SELECT g.id, g.parent, d.depth + 1, path::varchar[] || g.id::varchar FROM groups g
-			JOIN descendants d ON g.parent = d.id
-		)
+    ) 
+    ${pgUserGroups}
     SELECT g.id, g.parent, g.name, g.group_type, g.owner, 
       g.creating, g.reading, g.updating, g.deleting, 
       g.el_reading, g.el_creating, g.el_updating, g.el_deleting,
-      gl.user_id, gl.user_type, gl.p, gl.q, dsc.depth,
-			(SELECT COUNT(*) FROM groups WHERE parent = g.id) AS havechild
+      gl.user_id, gl.user_type, gl.p, gl.q, g.depth, g.level
 		FROM groups_list AS gl
 		LEFT JOIN groups AS g ON gl.group_id = g.id
-		JOIN (SELECT max(depth) AS depth, descendants.path[1] AS parent_id
-			    FROM descendants GROUP BY descendants.path[1]) AS dsc ON gl.group_id = dsc.parent_id
 		WHERE gl.group_id IN (SELECT * FROM ${pgGroups}) ${pgСonditions}
 		ORDER BY (gl.p::float8/gl.q) ${pgLimit};`;
 
   const client = await pg.pool.connect();
 
   try {
-    const { rows: groups } = await client.query(queryText, params);
+    const { rows } = await client.query(queryText, params);
 
-    groups.forEach(el => {
-      el.havechild = parseInt(el.havechild, 10); // eslint-disable-line
-      if (el.havechild) el.children = []; // eslint-disable-line
-    });
-
-    return Promise.resolve(groups);
+    return Promise.resolve(rows);
   } catch (error) {
     throw new VError(
       {
@@ -207,16 +202,17 @@ async function createGroup(conditions) {
 
     queryText = `SELECT g.id, g.parent, g.name, g.group_type, g.creating, g.reading,
       g.updating, g.deleting, g.el_creating, g.el_reading, g.el_updating, g.el_deleting,
-      g.owner, g.owner AS user_id, 1 AS user_type, 0 as havechild
+      g.owner, g.owner AS user_id, 1 AS user_type, g.depth, g.level, gl.p, gl.q
     FROM groups AS g
-    WHERE g.id = $1`;
-    params = [elementId];
+    RIGHT JOIN groups_list AS gl ON (gl.group_id = g.id) AND (gl.user_id = $1)
+    WHERE g.id = $2`;
+    params = [conditions.mainUser_id, elementId];
 
-    const { rows: groups } = await client.query(queryText, params);
+    const { rows } = await client.query(queryText, params);
 
     await client.query('COMMIT');
 
-    return Promise.resolve(groups);
+    return Promise.resolve(rows);
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -237,7 +233,7 @@ async function createGroup(conditions) {
  * @param {Object} condition - Get from api
  * @returns { function(...args): Promise }
  * @description Update exists <Group> in database
- * conditions object = { mainUser_id: Number,	group_id: char(8) }
+ * conditions object = { mainUser_id: Number,	id: char(8) }
  */
 async function updateGroup(conditions) {
   let attributes = '';
@@ -245,9 +241,9 @@ async function updateGroup(conditions) {
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
-    conditionMustBeSet(conditions, 'group_id');
+    conditionMustBeSet(conditions, 'id');
 
-    params.push(conditions.group_id);
+    params.push(conditions.id);
   } catch (error) {
     throw error;
   }
@@ -283,7 +279,7 @@ async function updateGroup(conditions) {
     let queryText = `SELECT user_type, reading, updating FROM groups_list AS gl
       LEFT JOIN groups AS gr ON (gl.group_id = gr.id)
       WHERE (gl.user_id = $1) AND (gl.group_id = $2);`;
-    const selectParams = [conditions.mainUser_id, conditions.group_id];
+    const selectParams = [conditions.mainUser_id, conditions.id];
     const { rows } = await client.query(queryText, selectParams);
     let result;
 
@@ -326,14 +322,14 @@ async function updateGroup(conditions) {
  * @param {Object} - conditions
  * @returns { function(...args): Promise }
  * @description Delete exists group
- * conditions object = { mainUser_id: Number, group_id: char(8) }
+ * conditions object = { mainUser_id: Number, id: char(8) }
  */
 async function removeGroup(conditions) {
   let onlyFromList = true; //eslint-disable-line
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
-    conditionMustBeSet(conditions, 'group_id');
+    conditionMustBeSet(conditions, 'id');
   } catch (error) {
     throw error;
   }
@@ -344,12 +340,12 @@ async function removeGroup(conditions) {
     await client.query('BEGIN');
 
     const queryText = `SELECT delete_group($1, $2, $3);`;
-    const params = [conditions.mainUser_id, conditions.group_id, onlyFromList];
+    const params = [conditions.mainUser_id, conditions.id, onlyFromList];
     const { rows } = await client.query(queryText, params);
 
     await client.query('COMMIT');
 
-    return Promise.resolve({ group_id: rows[0].delete_group });
+    return Promise.resolve({ id: rows[0].delete_group });
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -370,7 +366,7 @@ async function removeGroup(conditions) {
  * @param {Object} condition - Get from api
  * @returns { function(...args): Promise }
  * @description Set new position in groups_list
- * conditions object - { mainUser_id: Number,	group_id: char(8), parent_id: char(8),
+ * conditions object - { mainUser_id: Number,	id: char(8), parent_id: char(8),
  *  position: char(8), isBefore: Boolean }
  */
 async function updatePosition(conditions) {
@@ -380,7 +376,7 @@ async function updatePosition(conditions) {
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
-    conditionMustBeSet(conditions, 'group_id');
+    conditionMustBeSet(conditions, 'id');
 
     if (
       conditionMustSet(conditions, 'position') &&
@@ -390,7 +386,24 @@ async function updatePosition(conditions) {
     }
 
     if (conditionMustSet(conditions, 'parent_id')) {
-      parent_id = conditions.parent_id; // eslint-disable-line
+      if (
+        typeof conditions.parent_id === 'string' &&
+        (conditions.parent_id === '0' || conditions.parent_id.length === 8)
+      ) {
+        parent_id = conditions.parent_id; // eslint-disable-line
+      } else {
+        /* Bad request */
+        throw new VError(
+          {
+            info: {
+              parameter: 'parent_id',
+              value: conditions.parent_id,
+              status: 400,
+            },
+          },
+          '<parent_id> must have 8 char string of ID',
+        );
+      }
     }
 
     if (conditionMustSet(conditions, 'isBefore')) {
@@ -408,10 +421,10 @@ async function updatePosition(conditions) {
   try {
     await client.query('begin');
 
-    const queryText = `SELECT reorder_group($1, $2, $3, $4, $5);`;
-    const params = [
+    let queryText = `SELECT reorder_group($1, $2, $3, $4, $5);`;
+    let params = [
       conditions.mainUser_id,
-      conditions.group_id,
+      conditions.id,
       position,
       isBefore,
       parent_id,
@@ -419,9 +432,24 @@ async function updatePosition(conditions) {
 
     await client.query(queryText, params);
 
+    queryText = `SELECT g.id, g.parent, g.name, g.group_type, g.creating, g.reading,
+      g.updating, g.deleting, g.el_creating, g.el_reading, g.el_updating, g.el_deleting,
+      g.owner, g.owner AS user_id, 1 AS user_type, g.depth, g.level, gl.p, gl.q
+    FROM groups AS g
+    RIGHT JOIN groups_list AS gl ON (gl.group_id = g.id) AND (gl.user_id = $1)
+    WHERE g.id IN (SELECT * FROM UNNEST($2::varchar[]))
+    ORDER BY (gl.p::float8/gl.q);`;
+
+    const grp = [conditions.id];
+    if (position) grp.push(position);
+
+    params = [conditions.mainUser_id, grp];
+
+    const { rows } = await client.query(queryText, params);
+
     await client.query('commit');
 
-    return Promise.resolve({ group_id: conditions.group_id });
+    return Promise.resolve(rows);
   } catch (error) {
     await client.query('ROLLBACK');
 

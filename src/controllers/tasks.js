@@ -68,8 +68,7 @@ async function getTasks(conditions) {
   let pgСonditions = '';
   let pgUserGroups = '';
   let pgGroups = 'main_visible_groups'; // tasks visible only for main user
-  let pgParentCondition = ' AND tsk.parent is null'; // select Top level tasks
-  let pgParentCondition2 = 'parent is null';
+  let pgParentCondition = ' AND t.parent is null'; // select Top level tasks
   let pgTaskCondition = '';
   let pgGroupCondition = '';
   let pgSearchText = '';
@@ -82,14 +81,13 @@ async function getTasks(conditions) {
     params.push(conditions.mainUser_id);
 
     if (conditionMustSet(conditions, 'parent_id')) {
-      pgParentCondition = ` AND tsk.parent = \$${params.length + 1}`;
-      pgParentCondition2 = `parent = \$${params.length + 1}`;
+      pgParentCondition = ` AND t.parent = \$${params.length + 1}`;
       params.push(conditions.parent_id);
       selectTask = true;
     }
 
     if (conditionMustSet(conditions, 'id')) {
-      pgTaskCondition = ` AND tsk.id = \$${params.length + 1}`;
+      pgTaskCondition = ` AND t.id = \$${params.length + 1}`;
       params.push(conditions.task_id);
       selectTask = true;
     }
@@ -110,7 +108,7 @@ async function getTasks(conditions) {
     }
 
     if (conditionMustSet(conditions, 'like')) {
-      pgSearchText = ` AND tsk.name ILIKE '%\$${params.length + 1}%'`;
+      pgSearchText = ` AND t.name ILIKE '%\$${params.length + 1}%'`;
       params.push(conditions.like);
     }
 
@@ -153,22 +151,14 @@ async function getTasks(conditions) {
   pgСonditions =
     pgParentCondition + pgTaskCondition + pgGroupCondition + pgSearchText;
 
-  // SELECT mainUser-groups, filter on: mainUser_id or [public groups (group_id = 0)]
-  // if condition.whose = 'user' SELECT user-groups from [mainUser-groups] filter on: user_id
-  //	SELECT tasks IN [mainUser-groups] OR [user-groups if condition.whose = 'user'] filter on:
-  //		tasks.parent = task_id
-
   /* $1 = mainUser_id */
   const queryText = `WITH RECURSIVE main_visible_groups AS (
 		SELECT group_id FROM groups_list AS gl
 			LEFT JOIN groups AS grp ON gl.group_id = grp.id
 			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = $1)
-		) ${pgUserGroups}, descendants(id, parent, depth, path) AS (
-			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM tasks WHERE ${pgParentCondition2}
-		UNION
-			SELECT t.id, t.parent, d.depth + 1, path::varchar[] || t.id::varchar FROM tasks t
-			JOIN descendants d ON t.parent = d.id
-		), acts(duration, task_id) AS (
+    ) 
+    ${pgUserGroups}, 
+    acts(duration, task_id) AS (
 			SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
 				act.task_id FROM activity_list AS al
 			JOIN activity AS act ON (act.id = al.id)
@@ -177,32 +167,22 @@ async function getTasks(conditions) {
 				AND (act.status = 1 OR act.status = 5)
 			GROUP BY act.task_id
 		)
-		SELECT tsk.id, tl.group_id, tl.p, tl.q,
-			tsk.tid, tsk.name, tsk.owner AS tskowner,
-			act.status, tsk.note, tsk.parent,
-			(SELECT COUNT(*) FROM tasks WHERE parent = tsk.id) AS havechild,
+		SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	act.status, t.note, t.parent,
 			(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
-			dsc.depth, act.start
+			t.depth, t.level, act.start
 		FROM tasks_list AS tl
-		RIGHT JOIN tasks AS tsk ON tl.task_id = tsk.id
+		RIGHT JOIN tasks AS t ON tl.task_id = t.id
 		JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = $1)
 		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
-		JOIN (SELECT max(depth) AS depth, descendants.path[1] AS parent_id
-					FROM descendants GROUP BY descendants.path[1]) AS dsc ON tl.task_id = dsc.parent_id
 		WHERE tl.group_id IN (SELECT * FROM ${pgGroups}) ${pgСonditions}
 		ORDER BY tl.group_id, (tl.p::float8/tl.q) ${pgLimit};`;
 
   const client = await pg.pool.connect();
 
   try {
-    const { rows: tasks } = await client.query(queryText, params);
+    const { rows } = await client.query(queryText, params);
 
-    tasks.forEach(el => {
-      el.havechild = parseInt(el.havechild, 10); // eslint-disable-line
-      if (el.havechild) el.children = []; // eslint-disable-line
-    });
-
-    return Promise.resolve(tasks);
+    return Promise.resolve(rows);
   } catch (error) {
     throw new VError(
       {
@@ -258,19 +238,18 @@ async function createTask(conditions) {
 
     const elementId = newElements[0].add_task;
 
-    queryText = `SELECT tsk.id, tl.group_id, tl.p, tl.q,
-			tsk.tid, tsk.name, tsk.owner AS tskowner, tsk.note, tsk.parent,
-			0 AS status, 0 as duration, 0 AS havechild,	1 as depth
+    queryText = `SELECT t.id, tl.group_id, tl.p, tl.q, t.tid, t.name, t.owner, t.note, t.parent,
+			0 AS status, 0 AS duration, t.depth, t.level
 		FROM tasks_list AS tl
-		RIGHT JOIN tasks AS tsk ON tl.task_id = tsk.id
+		RIGHT JOIN tasks AS t ON tl.task_id = t.id
 		WHERE tl.task_id = $1 AND tl.group_id = $2`;
     params = [elementId, conditions.group_id];
 
-    const { rows: tasks } = await client.query(queryText, params);
+    const { rows } = await client.query(queryText, params);
 
     await client.query('commit');
 
-    return Promise.resolve(tasks);
+    return Promise.resolve(rows);
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -449,7 +428,24 @@ async function updatePosition(conditions) {
     }
 
     if (conditionMustSet(conditions, 'parent_id')) {
-      parent_id = conditions.parent_id; // eslint-disable-line
+      if (
+        typeof conditions.parent_id === 'string' &&
+        (conditions.parent_id === '0' || conditions.parent_id.length === 8)
+      ) {
+        parent_id = conditions.parent_id; // eslint-disable-line
+      } else {
+        /* Bad request */
+        throw new VError(
+          {
+            info: {
+              parameter: 'parent_id',
+              value: conditions.parent_id,
+              status: 400,
+            },
+          },
+          '<parent_id> must have 8 char string of ID',
+        );
+      }
     }
 
     if (conditionMustSet(conditions, 'isBefore')) {
@@ -464,13 +460,13 @@ async function updatePosition(conditions) {
 
   const client = await pg.pool.connect();
 
-  const returnObject = { id: conditions.id, groupChanged: false };
+  const returnObject = { id: conditions.id, groupChanged: false, data: null };
 
   try {
     await client.query('begin');
 
-    const queryText = `SELECT reorder_task($1, $2, $3, $4, $5, $6);`;
-    const params = [
+    let queryText = `SELECT reorder_task($1, $2, $3, $4, $5, $6);`;
+    let params = [
       conditions.mainUser_id,
       conditions.group_id,
       conditions.id,
@@ -486,6 +482,21 @@ async function updatePosition(conditions) {
     if (rows[0].reorder_task === 2) {
       returnObject.groupChanged = true;
     }
+
+    queryText = `
+      SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent, t.depth, t.level
+      FROM tasks_list AS tl
+      RIGHT JOIN tasks AS t ON tl.task_id = t.id
+      WHERE tl.task_id IN (SELECT * FROM UNNEST($1::varchar[]))
+      ORDER BY tl.group_id, (tl.p::float8/tl.q);`;
+
+    const tsks = [conditions.id];
+    if (position) tsks.push(position);
+
+    params = [tsks];
+
+    const { rows: tasks } = await client.query(queryText, params);
+    returnObject.data = tasks;
 
     await client.query('commit');
 

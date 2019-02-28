@@ -6,6 +6,8 @@ CREATE TABLE tasks (
 	name 		varchar(300),
 	note		varchar(2000),
 	owner 	integer,
+	level		smallint NOT NULL DEFAULT 1,
+	depth 	smallint NOT NULL DEFAULT 1,
 	CONSTRAINT tsk_id UNIQUE(id)
 );
 
@@ -135,8 +137,8 @@ SELECT group_id FROM groups_list AS gl
 	LEFT JOIN groups AS grp ON gl.group_id = grp.id
 	WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
 ), descendants(id, parent, depth, path) AS (
-    SELECT id, parent, 1 depth, ARRAY[id] FROM tasks --WHERE parent is null
-UNION
+  SELECT id, parent, 1 depth, ARRAY[id] FROM tasks --WHERE parent is null
+	UNION
 	SELECT t.id, t.parent, d.depth + 1, path || t.id FROM tasks t
 	JOIN descendants d ON t.parent = d.id
 )
@@ -158,7 +160,7 @@ LEFT JOIN context AS c ON c.id = cl.context_id
 LEFT JOIN context_setting AS cs ON cs.context_id = cl.context_id AND cs.user_id = 1
 WHERE cl.task_id in (select task_id from temp_task);
 
-/* Рабочая выборка списка задач из модуля tasks.js */
+/* Рабочая выборка списка задач из модуля tasks.js version 1 */
 WITH RECURSIVE main_visible_groups AS (
 	SELECT group_id FROM groups_list AS gl
 		LEFT JOIN groups AS grp ON gl.group_id = grp.id
@@ -189,46 +191,129 @@ WITH RECURSIVE main_visible_groups AS (
 	WHERE tl.group_id IN (SELECT * FROM main_visible_groups)
 	ORDER BY tl.group_id, (tl.p::float8/tl.q);
 
-/* Рабочая выборка списка задач из модуля tasks.js version 2*/
+/* Рабочая выборка списка задач из модуля tasks.js version 2 */
 WITH RECURSIVE main_visible_groups AS (
-		SELECT group_id FROM groups_list AS gl
-			LEFT JOIN groups AS grp ON gl.group_id = grp.id
-			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
-		) , descendants(id, parent, depth, path) AS (
-			SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM tasks WHERE parent is null
-		UNION
-			SELECT t.id, t.parent, d.depth + 1, path::varchar[] || t.id::varchar[] FROM tasks t
-			JOIN descendants d ON t.parent = d.id
-		), acts(duration, task_id) AS (
-			SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
-				act.task_id FROM activity_list AS al
-			JOIN activity AS act ON (act.id = al.id)
-			WHERE (al.user_id = 1)
-				AND (al.group_id IN (SELECT * FROM main_visible_groups))
-				AND (act.status = 1 OR act.status = 5)
-			GROUP BY act.task_id
-		)
-		SELECT tl.task_id, tl.group_id, tl.p, tl.q,
-			tsk.tid, tsk.name, tsk.owner AS tskowner,
-			act.status, tsk.note, tsk.parent,
-			(SELECT COUNT(*) FROM tasks WHERE parent = tsk.id) AS havechild,
-			(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
-			dsc.depth, act.start
-		FROM tasks_list AS tl
-		RIGHT JOIN tasks AS tsk ON tl.task_id = tsk.id
-		JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
-		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
-		JOIN (SELECT max(depth) AS depth, descendants.path[1] AS parent_id
-					FROM descendants GROUP BY descendants.path[1]) AS dsc ON tl.task_id = dsc.parent_id
-		WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND tsk.parent is Null
-		ORDER BY tl.group_id, (tl.p::float8/tl.q) LIMIT 10 OFFSET 0
+	SELECT group_id FROM groups_list AS gl
+		LEFT JOIN groups AS grp ON gl.group_id = grp.id
+		WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
+	) , descendants(id, parent, depth, path) AS (
+		SELECT id, parent, 1 depth, ARRAY[id]::varchar[] FROM tasks WHERE parent is null
+	UNION
+		SELECT t.id, t.parent, d.depth + 1, path::varchar[] || t.id::varchar[] FROM tasks t
+		JOIN descendants d ON t.parent = d.id
+	), acts(duration, task_id) AS (
+		SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+			act.task_id FROM activity_list AS al
+		JOIN activity AS act ON (act.id = al.id)
+		WHERE (al.user_id = 1)
+			AND (al.group_id IN (SELECT * FROM main_visible_groups))
+			AND (act.status = 1 OR act.status = 5)
+		GROUP BY act.task_id
+	)
+	SELECT tl.task_id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner, t.note, t.parent,
+		(SELECT COUNT(*) FROM tasks WHERE parent = t.id) AS havechild,
+		(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
+		dsc.depth, act.start, act.status
+	FROM tasks_list AS tl
+	RIGHT JOIN tasks AS t ON tl.task_id = t.id
+	JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
+	JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
+	JOIN (SELECT max(depth) AS depth, descendants.path[1] AS parent_id
+				FROM descendants GROUP BY descendants.path[1]) AS dsc ON tl.task_id = dsc.parent_id
+	WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND t.parent is Null
+	ORDER BY tl.group_id, (tl.p::float8/tl.q) LIMIT 10 OFFSET 0
+
+/* Рабочая выборка списка задач из модуля tasks.js version 3 (work) */
+WITH RECURSIVE 
+main_visible_groups AS (
+	SELECT group_id FROM groups_list AS gl
+	LEFT JOIN groups AS grp ON gl.group_id = grp.id
+	WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
+), 
+acts(duration, task_id) AS (
+	SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+		act.task_id FROM activity_list AS al
+	JOIN activity AS act ON (act.id = al.id)
+	WHERE (al.user_id = 1)
+		AND (al.group_id IN (SELECT * FROM main_visible_groups))
+		AND (act.status = 1 OR act.status = 5)
+	GROUP BY act.task_id
+) select * from acts
+SELECT tl.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner, t.note, t.parent,
+	(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
+	t.depth, t.level, act.start, act.status
+FROM tasks_list AS tl
+RIGHT JOIN tasks AS t ON tl.task_id = t.id
+JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
+JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
+WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND t.parent is Null
+ORDER BY tl.group_id, (tl.p::float8/tl.q) LIMIT 10 OFFSET 0;
+
+/* Вариант выборки списка задач, с преформированием активностей в отдельном запросе */
+WITH RECURSIVE main_visible_groups AS (
+	SELECT group_id FROM groups_list AS gl
+		LEFT JOIN groups AS grp ON gl.group_id = grp.id
+		WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
+	) , main_activity AS (
+		SELECT start, status, task_id, group_id FROM activity_list AS al
+		RIGHT JOIN activity AS a ON (a.ends IS NULL) AND (a.id = al.id)
+		WHERE al.user_id = 1
+	)	, acts(duration, task_id) AS (
+		SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+			act.task_id FROM activity_list AS al
+		JOIN activity AS act ON (act.id = al.id)
+		WHERE (al.user_id = 1)
+			AND (al.group_id IN (SELECT * FROM main_visible_groups))
+			AND (act.status = 1 OR act.status = 5)
+		GROUP BY act.task_id
+	)	SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent,
+		(SELECT COUNT(*) FROM tasks WHERE parent = t.id) AS havechild,
+		(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
+		t.depth, act.start, act.status
+	FROM tasks_list AS tl
+	RIGHT JOIN tasks AS t ON tl.task_id = t.id
+	LEFT JOIN (SELECT * FROM main_activity) AS act ON (act.group_id = tl.group_id) AND (act.task_id = t.id)
+	WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND t.parent is null
+	ORDER BY tl.group_id, (tl.p::float8/tl.q);
+
+SELECT add_activity(1, '0ZfgI7KW', 2::smallint, false);
+UPDATE activity	SET (start, task_id, status, productive, part) =
+	('2019-02-20T13:22:24.330Z', 'bxh-0ReU', 0, true, (SELECT count(id) FROM activity WHERE task_id = 'bxh-0ReU'))
+	WHERE id = '901Olgfn';
+
+SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent, t.depth, t.level
+FROM tasks_list AS tl
+RIGHT JOIN tasks AS t ON tl.task_id = t.id
+WHERE tl.task_id IN (SELECT * FROM UNNEST(ARRAY['Ukn-9_6H']::char[8]))
+ORDER BY tl.group_id, (tl.p::float8/tl.q);
 
 /* TEST OPERATIONS for add_task */
-SELECT add_task(1, 'qJo_5F_Y', '0', TRUE);
+SELECT add_task(1, '0ZfgI7KW', null, TRUE);
+--select reorder_task(1, 'Jv7jbOq7', 'Ukn-9_6H', null, true, null);
+
+SELECT * from groups;
 SELECT * from tasks;
-SELECT * from tasks_list;
-DELETE FROM tasks WHERE id = 9;
-DELETE FROM tasks_list where task_id = 9;
+SELECT * from tasks_list ORDER BY (p::float8/q);
+SELECT * from activity;
+SELECT * from activity_list;
+
+WITH RECURSIVE descendants AS (
+    SELECT id, parent, 1 depth
+    FROM tasks
+    WHERE id = '0VRdtbMR'
+UNION
+    SELECT t.id, t.parent, d.depth + 1
+    FROM tasks t
+    INNER JOIN descendants d
+    ON t.parent = d.id
+)
+SELECT MAX(depth)
+FROM descendants d
+
+DELETE FROM tasks;
+DELETE FROM tasks_list;
+DELETE FROM activity;
+DELETE FROM activity_list;
 
 /* Create new task in tasks table, and add it in tasks_list table
 	 0 - Group for main user not found
@@ -242,15 +327,18 @@ CREATE OR REPLACE FUNCTION add_task (
 	_parent_id 	 char(8),
 	_isStart 		 boolean
 )
-RETURNS text LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $f$
+RETURNS text LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $body$
 DECLARE
 	main_group_reading integer;
 	main_el_creating 	 integer;
 	main_el_reading 	 integer;
 	main_user_type 		 integer;
-	task_id 					 char(8);
-	parent 						 char(8);
+	taskId 					   char(8);
+	newParent 				 char(8);
 	tid 							 integer;
+	newLevel					 smallint;
+	descLevel					 smallint;
+	depthParent				 char(8);
 BEGIN
 	SELECT gl.user_type, g.reading, g.el_creating, g.el_reading
 	  INTO main_user_type, main_group_reading, main_el_creating, main_el_reading FROM groups_list AS gl
@@ -278,20 +366,38 @@ BEGIN
 	SELECT count(id) INTO tid FROM tasks WHERE (owner = main_user_id);
 	tid := tid + 1;
 
-	parent := _parent_id;
+	newParent := _parent_id;
 	IF _parent_id = '0' THEN
-		parent := null;
+		newParent := null;
 	END IF;
 
-	INSERT INTO tasks (tid, name, owner, note, parent)
-		VALUES (tid, '', main_user_id, '', parent)
-		RETURNING id INTO task_id;
+	/* Вычисление уровеня элемента */
+	IF newParent is null THEN
+		newLevel := 1;
+	ELSE
+		SELECT level INTO descLevel FROM tasks AS t WHERE t.id = newParent;
+		newLevel := descLevel + 1;
+	END IF;
 
-	PERFORM task_place_list(_group_id, task_id, parent, NOT _isStart);
+	/* Пересчёт глубины вложенных элементов, глубина нужна для вычисления пределов
+	перемещения элементов на клиенте без загрузки всей иерархии с сервера */
+	IF newLevel = 3 THEN
+		UPDATE tasks SET depth = 2 WHERE (id = newParent) AND (depth < 2);
+		SELECT parent INTO depthParent FROM tasks WHERE (id = newParent);
+		UPDATE tasks SET depth = 3 WHERE (id = depthParent) AND (depth < 3);
+	ELSIF newLevel = 2 THEN
+		UPDATE tasks SET depth = 2 WHERE (id = newParent) AND (depth < 2);
+	END IF;
 
-	RETURN task_id;
+	INSERT INTO tasks (tid, name, owner, note, parent, level, depth)
+		VALUES (tid, '', main_user_id, '', newParent, newLevel, 1)
+		RETURNING id INTO taskId;
+
+	PERFORM task_place_list(_group_id, taskId, newParent, NOT _isStart);
+
+	RETURN taskId;
 END;
-$f$;
+$body$;
 
 /* 
 	Delete task in tasks table, and add it in tasks_list table
@@ -314,6 +420,9 @@ DECLARE
 	main_el_deleting 	 integer;
 	main_el_reading 	 integer;
 	countchild 				 integer;
+	el_parent					 char(8);
+	el_level					 smallint;
+	el_depth			 		 smallint;
 BEGIN
 	SELECT gl.user_type, g.reading, g.el_deleting, g.el_reading
 	  INTO main_user_type, main_group_reading, main_el_deleting, main_el_reading FROM groups_list AS gl
@@ -341,6 +450,8 @@ BEGIN
 	  RAISE EXCEPTION 'Can not delete. Task have subelement';
 	END IF;
 
+	SELECT parent, level INTO el_parent, el_level FROM tasks WHERE id = _task_id;
+
 	IF _isOnlyFromList = TRUE THEN
 	  DELETE FROM tasks_list WHERE (task_id = _task_id) AND (group_id = _group_id);
 	  UPDATE tasks SET parent = null WHERE (id = _task_id);
@@ -349,6 +460,24 @@ BEGIN
 	  DELETE FROM tasks WHERE (id = _task_id);
 	  DELETE FROM context_list WHERE (task_id = _task_id);
 	END IF;
+
+	IF el_parent IS NOT NULL THEN
+		/* Если есть родитель у удаляемого элемента, значит необходимо пересчитать 
+			его глубину с учетом удаленного элемента */
+
+		/* Рекурсивный пересчёт новой глубины у родителя */
+		WITH RECURSIVE descendants AS (
+			SELECT id, parent, 1 depth FROM tasks	WHERE id = el_parent
+		UNION
+			SELECT t.id, t.parent, d.depth + 1 FROM tasks t	INNER JOIN descendants d
+			ON t.parent = d.id
+		)
+		SELECT MAX(depth) INTO el_depth FROM descendants d;
+
+		UPDATE tasks SET depth = el_depth WHERE id = el_parent;
+	END IF;
+
+	UPDATE tasks SET (depth, level) = (1, 1) WHERE id = _task_id;
 
 	RETURN _task_id;
 END;
@@ -380,6 +509,9 @@ CREATE OR REPLACE FUNCTION reorder_task (
 	_parent 		 char(8)
 ) RETURNS integer LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $f$
 DECLARE
+	before_level				smallint;
+	before_depth				smallint;
+	before_parent_depth smallint;
 	before_group_id 		char(8);
 	before_parent_id 		char(8);
 	main_group_id 			char(8);
@@ -387,6 +519,7 @@ DECLARE
 	main_el_updating 		integer;
 	main_user_type 			integer;
 	rel_group_id 				char(8);
+	parent_level				smallint;
 BEGIN
 	/* Выборка доступной пользователю группы для проверки прав на операции с ней,
 		где user_id = 0 это группы общие для всех пользователей */
@@ -424,19 +557,51 @@ BEGIN
 		RAISE EXCEPTION 'User does not have permissions to updating this group';
 	END IF;
 
-    -- moving a record to its own position is a no-op
-    --IF _relation_id=_task_id THEN RETURN 0; END IF;
+	IF _parent = '0' THEN
+		_parent := null;
+	END IF;
 
-	/* Получение предыдущих значений группы и родителя у задачи */
-	SELECT tl.group_id, t.parent INTO strict before_group_id, before_parent_id FROM tasks_list AS tl
+  -- moving a record to its own position is a no-op
+  --IF _relation_id=_task_id THEN RETURN 0; END IF;
+
+	/* Получение предыдущих значений группы, уровня, глубины и родителя у задачи */
+	SELECT tl.group_id, t.parent, t.level, t.depth 
+		INTO strict before_group_id, before_parent_id, before_level, before_depth
+	FROM tasks_list AS tl
 	LEFT JOIN tasks AS t ON t.id = tl.task_id
 	WHERE tl.task_id = _task_id
-	GROUP BY tl.group_id, t.parent;
+  GROUP BY tl.group_id, t.parent, t.level, t.depth;
+
+	parent_level := 0;
 
 	/* Сравнение родителей у старой и новой позиции, если поменялись, то необходимо обновить */
-	IF _parent IS NOT NULL THEN
-		IF _parent <> before_parent_id THEN
-			UPDATE tasks SET parent = _parent WHERE id = _task_id;
+	IF COALESCE(_parent, '0') <> COALESCE(before_parent_id, '0') THEN
+		/* Смена родителя, что может означать и смену уровня элемента. Поэтому необходимо
+			проверить допустимостимость такого перемещения, что бы не выйти за ограничение 
+			вложенности в 3 уровня */
+		IF _parent IS NOT NULL THEN
+			SELECT level INTO parent_level FROM tasks WHERE id = _parent;
+		END IF;
+
+		IF (parent_level + before_depth) > 3 THEN
+			RAISE EXCEPTION 'Out of level';
+		END IF;
+
+		/* Обновление родителя */
+		UPDATE tasks SET parent = _parent WHERE id = _task_id;
+
+		/* Ну и конечно же, раз изменился состав элементов у предыдущего родителя, то ему необходимо
+			пересчитать depth */
+		IF before_parent_id IS NOT NULL THEN
+			WITH RECURSIVE descendants AS (
+				SELECT id, parent, 1 depth FROM tasks	WHERE id = before_parent_id
+			UNION
+				SELECT t.id, t.parent, d.depth + 1 FROM tasks t	INNER JOIN descendants d
+				ON t.parent = d.id
+			)
+			SELECT MAX(depth) INTO before_parent_depth FROM descendants d;
+
+			UPDATE tasks SET depth = before_parent_depth WHERE id = before_parent_id;
 		END IF;
 	END IF;
 
@@ -459,7 +624,7 @@ BEGIN
 		FROM tasks_list AS tl
 		WHERE tl.task_id = _relation_id;
 
-		IF _group_id <> rel_group_id THEN
+		IF _group_id <> COALESCE(rel_group_id, '0') THEN
 			perform task_place_list(_group_id, _task_id, null, FALSE);
 		ELSE
 			perform task_place_list(_group_id, _task_id, _relation_id, _is_before);
@@ -468,6 +633,28 @@ BEGIN
 
 	-- lock the tasks_list
 	--perform 1 FROM tasks_list tl WHERE tl.task_id=before_group_id FOR UPDATE;
+
+	/* Пересчет level и depth у родителя, если он есть. Так же и у самого элемента. Т.к. иерархия 
+		ограничена 3 уровнями, то нет необходимости мудрить конструкции с циклами */
+	IF COALESCE(_parent, '0') <> COALESCE(before_parent_id, '0') THEN
+		/* Отталкиваясь от уровня нового родителя можно вычислить уровень для текущего элемента */
+		UPDATE tasks SET level = parent_level + 1 WHERE id = _task_id;
+
+		/* И его потомков */
+		UPDATE tasks SET level = parent_level + 2 WHERE parent = _task_id;
+		
+		/* Рекурсивный пересчёт новой глубины у родителя */
+		WITH RECURSIVE descendants AS (
+			SELECT id, parent, 1 depth FROM tasks	WHERE id = _parent
+		UNION
+			SELECT t.id, t.parent, d.depth + 1 FROM tasks t	INNER JOIN descendants d
+			ON t.parent = d.id
+		)
+		SELECT MAX(depth) INTO before_depth FROM descendants d;
+
+		/* Тут прост используется свободная переменная before_depth для передачи значения */
+		UPDATE tasks SET depth = before_depth WHERE id = _parent;
+	END IF;
 
 	/* Если сменилась, группа, то функция task_place_list автоматически создаст новую запись в
 		списке tasks_list. Значит необходимо удалить предыдущую запись. Что и делается ниже */
@@ -481,8 +668,7 @@ BEGIN
 		/* Возвращается единичка, как признак, что все нормально поменялось */
 		return 1;
  	END IF;
-
-  END;
+END;
 $f$;
 
 -- insert or move item TSK_ID in group GRP_ID next to REL_ID,

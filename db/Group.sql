@@ -13,6 +13,8 @@ CREATE TABLE groups (
 	el_updating smallint DEFAULT 1,
 	el_deleting smallint DEFAULT 1,
 	owner integer,
+	level smallint NOT NULL DEFAULT 1,
+	depth smallint NOT NULL DEFAULT 1;
 	CONSTRAINT gr_id UNIQUE(id)
 );
 
@@ -39,12 +41,18 @@ DELETE FROM groups;
 DELETE FROM groups_list;
 DELETE FROM tasks;
 DELETE FROM tasks_list;
+DELETE FROM users;
+DELETE FROM users_list;
+DELETE FROM sheets;
+DELETE FROM sheets_conditions;
+DELETE FROM clients;
 
 select add_group(1, '0ZfgI7KW', 2, true);
+
+DELETE FROM groups WHERE id = 'nKH6ok6z';
+UPDATE groups SET depth = 1 WHERE (id = 'EvUnHsjl');
 select * from groups;
 select * from groups_list;
-
-UPDATE groups SET parent = null WHERE (id = 'sc8d17O_');
 
 /* Create new group in groups table, and add it in groups_list table 
 	group_type = {
@@ -61,19 +69,40 @@ CREATE OR REPLACE FUNCTION add_group (
 )
 RETURNS text LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $f$
 DECLARE
-	group_id char(8);
-	parent 	 char(8);
+	group_id 		char(8);
+	newParent 	char(8);
+	newLevel 		smallint;
+	descLevel 	smallint;
+	depthParent char(8);
 BEGIN
-	parent := _parent_id;
-	IF _parent_id = '0' THEN
-		parent := null;
+	newParent := _parent_id;
+	IF newParent = '0' THEN
+		newParent := null;
 	END IF;
 
-	INSERT INTO groups (parent, name, group_type, owner)
-		VALUES (parent, '', _group_type, main_user_id)
+	/* Вычисление уровеня элемента */
+	IF newParent is null THEN
+		newLevel := 1;
+	ELSE
+		SELECT level INTO descLevel FROM groups AS g WHERE g.id = newParent;
+		newLevel := descLevel + 1;
+	END IF;
+
+	/* Пересчёт глубины вложенных элементов, глубина нужна для вычисления пределов
+	перемещения элементов на клиенте без загрузки всей иерархии с сервера */
+	IF newLevel = 3 THEN
+		UPDATE groups SET depth = 2 WHERE (id = newParent) AND (depth < 2);
+		SELECT parent INTO depthParent FROM groups WHERE (id = newParent);
+		UPDATE groups SET depth = 3 WHERE (id = depthParent) AND (depth < 3);
+	ELSIF newLevel = 2 THEN
+		UPDATE groups SET depth = 2 WHERE (id = newParent) AND (depth < 2);
+	END IF;	
+
+	INSERT INTO groups (parent, name, group_type, owner, level, depth)
+		VALUES (newParent, '', _group_type, main_user_id, newLevel, 1)
 		RETURNING id INTO group_id;
 
-	PERFORM group_place_list(main_user_id, group_id, parent, NOT _isStart);
+	PERFORM group_place_list(main_user_id, group_id, newParent, NOT _isStart);
 
 	RETURN group_id;
 END;
@@ -92,6 +121,9 @@ DECLARE
 	main_group_deleting integer;
 	countchild 				  integer;
 	group_type          integer;
+	el_parent					  char(8);
+	el_level						smallint;
+	el_depth						smallint;
 BEGIN
 	SELECT gl.user_type, g.reading, g.deleting, g.group_type
 		INTO main_user_type, main_group_reading, main_group_deleting, group_type FROM groups_list AS gl
@@ -119,6 +151,8 @@ BEGIN
 	  RAISE EXCEPTION 'Can not delete. Group have subelement';
 	END IF;
 
+	SELECT parent, level INTO el_parent, el_level FROM groups WHERE id = _group_id;
+
 	IF _isOnlyFromList = TRUE THEN
 	  DELETE FROM groups_list WHERE (group_id = _group_id) AND (user_id = main_user_id);
 	  UPDATE groups SET parent = null WHERE (id = _group_id);
@@ -126,6 +160,24 @@ BEGIN
 	  DELETE FROM groups_list WHERE (group_id = _group_id);
 	  DELETE FROM groups WHERE (id = _group_id);
 	END IF;
+
+	IF el_parent IS NOT NULL THEN
+		/* Если есть родитель у удаляемого элемента, значит необходимо пересчитать 
+			его глубину с учетом удаленного элемента */
+
+		/* Рекурсивный пересчёт новой глубины у родителя */
+		WITH RECURSIVE descendants AS (
+			SELECT id, parent, 1 depth FROM groups WHERE id = el_parent
+		UNION
+			SELECT g.id, g.parent, d.depth + 1 FROM groups g INNER JOIN descendants d
+			ON g.parent = d.id
+		)
+		SELECT MAX(depth) INTO el_depth FROM descendants d;
+
+		UPDATE groups SET depth = el_depth WHERE id = el_parent;
+	END IF;
+
+	UPDATE groups SET (depth, level) = (1, 1) WHERE id = _group_id;
 
 	RETURN _group_id;
 END;
@@ -155,13 +207,16 @@ CREATE OR REPLACE FUNCTION reorder_group (
 	_parent 		 char(8)
 ) RETURNS integer LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $f$
 DECLARE
-	before_group_id 		char(8);
+	before_level				smallint;
+	before_depth				smallint;
+	before_parent_depth smallint;
 	before_parent_id 		char(8);
 	main_group_id 			char(8);
 	main_group_reading 	integer;
 	main_group_updating	integer;
 	main_user_type 			integer;
 	rel_group_id 				char(8);
+	parent_level				smallint;
 BEGIN
 	/* Выборка доступной пользователю группы для проверки прав на операции с ней,
 		где user_id is null это группы общие для всех пользователей */
@@ -203,18 +258,50 @@ BEGIN
 		RAISE EXCEPTION 'User does not have permissions to updating this group';
 	END IF;
 
+	IF _parent = '0' THEN
+		_parent := null;
+	END IF;
+
 	/* Получение предыдущих значений группы и родителя */
-	SELECT gl.group_id, g.parent INTO strict before_group_id, before_parent_id FROM groups_list AS gl
+	SELECT g.parent, g.level, g.depth
+		INTO strict before_parent_id, before_level, before_depth
+	FROM groups_list AS gl
 	LEFT JOIN groups AS g ON g.id = gl.group_id
 	WHERE (gl.group_id = _group_id) AND (gl.user_id = main_user_id)
-	GROUP BY gl.group_id, g.parent;
+	GROUP BY gl.group_id, g.parent, g.level, g.depth;
+
+	parent_level := 0;
 
 	/* Сравнение родителей у старой и новой позиции, если поменялись, то необходимо обновить */
-	-- IF _parent IS NOT NULL THEN
-		IF COALESCE(_parent, '0') <> COALESCE(before_parent_id, '0') THEN
-			UPDATE groups SET parent = _parent WHERE id = _group_id;
+	IF COALESCE(_parent, '0') <> COALESCE(before_parent_id, '0') THEN
+		/* Смена родителя, что может означать и смену уровня элемента. Поэтому необходимо
+			проверить допустимостимость такого перемещения, что бы не выйти за ограничение 
+			вложенности в 3 уровня */
+		IF _parent IS NOT NULL THEN
+			SELECT level INTO parent_level FROM groups WHERE id = _parent;
 		END IF;
-	-- END IF;
+
+		IF (parent_level + before_depth) > 3 THEN
+			RAISE EXCEPTION 'Out of level';
+		END IF;
+
+		/* Обновление родителя */
+		UPDATE groups SET parent = _parent WHERE id = _group_id;
+
+		/* Ну и конечно же, раз изменился состав элементов у предыдущего родителя, то ему необходимо
+			пересчитать depth */
+		IF before_parent_id IS NOT NULL THEN
+			WITH RECURSIVE descendants AS (
+				SELECT id, parent, 1 depth FROM groups WHERE id = before_parent_id
+			UNION
+				SELECT g.id, g.parent, d.depth + 1 FROM groups g INNER JOIN descendants d
+				ON g.parent = d.id
+			)
+			SELECT MAX(depth) INTO before_parent_depth FROM descendants d;
+
+			UPDATE groups SET depth = before_parent_depth WHERE id = before_parent_id;
+		END IF;
+	END IF;
 
 	/* Обработка перемещения элемента в списке groups_list, тут важно организовать правильное
 		положение элемента в списке (то что задал пользователь), для этого используется частное
@@ -225,6 +312,28 @@ BEGIN
 		начало или конец списка (регулируется параметром _is_before)
 	*/
 	perform group_place_list(main_user_id, _group_id, _relation_id, _is_before);
+
+	/* Пересчет level и depth у родителя, если он есть. Так же и у самого элемента. Т.к. иерархия 
+		ограничена 3 уровнями, то нет необходимости мудрить конструкции с циклами */
+	IF COALESCE(_parent, '0') <> COALESCE(before_parent_id, '0') THEN
+		/* Отталкиваясь от уровня нового родителя можно вычислить уровень для текущего элемента */
+		UPDATE groups SET level = parent_level + 1 WHERE id = _group_id;
+
+		/* И его потомков */
+		UPDATE groups SET level = parent_level + 2 WHERE parent = _group_id;
+		
+		/* Рекурсивный пересчёт новой глубины у родителя */
+		WITH RECURSIVE descendants AS (
+			SELECT id, parent, 1 depth FROM groups	WHERE id = _parent
+		UNION
+			SELECT g.id, g.parent, d.depth + 1 FROM groups g	INNER JOIN descendants d
+			ON g.parent = d.id
+		)
+		SELECT MAX(depth) INTO before_depth FROM descendants d;
+
+		/* Тут прост используется свободная переменная before_depth для передачи значения */
+		UPDATE groups SET depth = before_depth WHERE id = _parent;
+	END IF;
 
 	/* Возвращается единичка, как признак, что все нормально поменялось */
 	return 1;

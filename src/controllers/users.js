@@ -50,12 +50,14 @@ async function getOrCreateUser(conditions) {
 
     await client.query('BEGIN');
 
+    /* Create user by token id */
     queryText = `
     INSERT INTO users (id, username, email, created) VALUES ($1, $2, $3, $4) 
     RETURNING id, username, email, null AS name, null AS dateofbirth, null AS city, null AS country, 
       null AS gender, null AS phone, null AS avatar;`;
     const { rows: users } = await client.query(queryText, params);
 
+    /* Create default group: personal */
     params = [conditions.mainUser_id];
     queryText = `select add_group($1, null, 1, true);`;
     const { rows: groups } = await client.query(queryText, params);
@@ -64,10 +66,24 @@ async function getOrCreateUser(conditions) {
     queryText = `UPDATE groups SET name = 'personal' WHERE (id = $1);`;
     await client.query(queryText, params);
 
+    /* Create default sheet: My groups */
     params = [conditions.mainUser_id];
     queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
-    VALUES (4, $1, $1, 'My personal tasks', true, 2);`;
+    VALUES (8, $1, $1, 'My groups', true, 1);`;
     await client.query(queryText, params);
+
+    /* Create default sheet: My tasks */
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
+    VALUES (4, $1, $1, 'My tasks', true, 2);`;
+    await client.query(queryText, params);
+
+    /* Create default sheet: My users */
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
+    VALUES (16, $1, $1, 'My users', false, 2);`;
+    await client.query(queryText, params);
+
+    /* Create default sheet: All groups */
+    /* Create default sheet: All users */
 
     await client.query('COMMIT');
 

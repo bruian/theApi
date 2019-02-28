@@ -489,14 +489,14 @@ router.put('/tasks/order', jwtMiddleware(), async ctx => {
     condition.group_id = condition.group_id;
 
     if (!taskData.groupChanged) {
-      ctx.body = { data: taskData, activity_data: null };
+      ctx.body = { data: taskData.data, activity_data: null };
       return;
     }
 
     const activityData = await ActivityController.createActivity(condition);
     logRequest(timeStart, ctx, condition, activityData);
 
-    ctx.body = { data: taskData, activity_data: activityData };
+    ctx.body = { data: taskData.data, activity_data: activityData };
   } catch (error) {
     log.warn(
       `/tasks/order put |-> status:${error.jse_info.status} | message:${
