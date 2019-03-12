@@ -8,6 +8,7 @@ CREATE TABLE tasks (
 	owner 	integer,
 	level		smallint NOT NULL DEFAULT 1,
 	depth 	smallint NOT NULL DEFAULT 1,
+	singular boolean NOT NULL DEFAULT false,
 	CONSTRAINT tsk_id UNIQUE(id)
 );
 
@@ -256,7 +257,7 @@ WITH RECURSIVE main_visible_groups AS (
 		WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
 	) , main_activity AS (
 		SELECT start, status, task_id, group_id FROM activity_list AS al
-		RIGHT JOIN activity AS a ON (a.ends IS NULL) AND (a.id = al.id)
+		RIGHT JOIN activity AS a ON (a.id = al.id) AND (a.ends IS NULL OR a.status = 2 OR a.status = 4 OR a.status = 6)
 		WHERE al.user_id = 1
 	)	, acts(duration, task_id) AS (
 		SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,

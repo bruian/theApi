@@ -77,6 +77,11 @@ async function getOrCreateUser(conditions) {
     VALUES (4, $1, $1, 'My tasks', true, 2);`;
     await client.query(queryText, params);
 
+    /* Create default sheet: My activity */
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
+    VALUES (2, $1, $1, 'My activity', false, 2);`;
+    await client.query(queryText, params);
+
     /* Create default sheet: My users */
     queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
     VALUES (16, $1, $1, 'My users', false, 2);`;

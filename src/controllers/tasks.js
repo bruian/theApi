@@ -169,11 +169,13 @@ async function getTasks(conditions) {
 		)
 		SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	act.status, t.note, t.parent,
 			(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration,
-			t.depth, t.level, act.start
+			t.depth, t.level, act.start, t.singular
 		FROM tasks_list AS tl
 		RIGHT JOIN tasks AS t ON tl.task_id = t.id
 		JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = $1)
-		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
+    JOIN activity AS act ON (act.task_id = tl.task_id) 
+      AND (act.ends IS NULL OR act.status = 2 OR act.status = 4 OR act.status = 6) 
+      AND (act.id = al.id)
 		WHERE tl.group_id IN (SELECT * FROM ${pgGroups}) ${pgСonditions}
 		ORDER BY tl.group_id, (tl.p::float8/tl.q) ${pgLimit};`;
 
@@ -239,7 +241,7 @@ async function createTask(conditions) {
     const elementId = newElements[0].add_task;
 
     queryText = `SELECT t.id, tl.group_id, tl.p, tl.q, t.tid, t.name, t.owner, t.note, t.parent,
-			0 AS status, 0 AS duration, t.depth, t.level
+			0 AS status, 0 AS duration, t.depth, t.level, t.singular
 		FROM tasks_list AS tl
 		RIGHT JOIN tasks AS t ON tl.task_id = t.id
 		WHERE tl.task_id = $1 AND tl.group_id = $2`;
@@ -274,6 +276,10 @@ async function createTask(conditions) {
  */
 async function updateTask(conditions) {
   let attributes = '';
+  let nameChanged = false;
+  const result = {
+    tasks_data: null,
+  };
   const params = [];
 
   try {
@@ -292,11 +298,17 @@ async function updateTask(conditions) {
   Object.keys(conditions).forEach(prop => {
     switch (prop) {
       case 'name':
+        nameChanged = true;
         attributes = `${attributes} name = \$${params.length + 1}`;
         params.push(conditions[prop]);
         break;
       case 'note':
         attributes = `${attributes} note = \$${params.length + 1}`;
+        params.push(conditions[prop]);
+        break;
+      case 'singular':
+        nameChanged = true;
+        attributes = `${attributes} singular = \$${params.length + 1}`;
         params.push(conditions[prop]);
         break;
       default:
@@ -324,18 +336,32 @@ async function updateTask(conditions) {
 				AND (gl.user_id = 0 OR gl.user_id = $1)
 		)
 		UPDATE tasks SET ${attributes} WHERE id IN (SELECT * FROM main_visible_task)
-		RETURNING id;`;
+		RETURNING id, name, note, singular;`;
 
   const client = await pg.pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    const { rows: elements } = await client.query(queryText, params);
+    const { rows: tasks_data } = await client.query(queryText, params);
 
     await client.query('commit');
 
-    return Promise.resolve(elements);
+    result.tasks_data = tasks_data;
+
+    if (nameChanged) {
+      const { rows } = await client.query(
+        `SELECT a.id, t.name, t.singular 
+      FROM activity AS a
+      RIGHT JOIN tasks AS t ON (t.id = a.task_id)
+      WHERE a.task_id = $1`,
+        [conditions.id],
+      );
+
+      result.activity_data = rows;
+    }
+
+    return Promise.resolve(result);
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -384,9 +410,21 @@ async function deleteTask(conditions) {
 
     const { rows } = await client.query(queryText, params);
 
+    const { rows: deleted_activity } = await client.query(
+      `
+      DELETE FROM activity_list USING activity_list AS al
+      RIGHT JOIN activity AS a ON (a.id = al.id) AND (a.task_id = $1)
+      WHERE (activity_list.id = al.id) AND (al.user_id = $2)
+      RETURNING activity_list.id;`,
+      [conditions.id, conditions.mainUser_id],
+    );
+
     await client.query('commit');
 
-    return Promise.resolve({ task_id: rows[0].delete_task });
+    return Promise.resolve({
+      deleted_tasks: [{ id: rows[0].delete_task }],
+      deleted_activity,
+    });
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -484,7 +522,7 @@ async function updatePosition(conditions) {
     }
 
     queryText = `
-      SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent, t.depth, t.level
+      SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent, t.depth, t.level, t.singular
       FROM tasks_list AS tl
       RIGHT JOIN tasks AS t ON tl.task_id = t.id
       WHERE tl.task_id IN (SELECT * FROM UNNEST($1::varchar[]))

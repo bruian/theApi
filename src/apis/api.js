@@ -363,9 +363,9 @@ router.get('/tasks', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const data = await TaskController.getTasks(condition);
-    logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data, packet: condition.packet };
+    const tasks_data = await TaskController.getTasks(condition);
+    logRequest(timeStart, ctx, condition, tasks_data);
+    ctx.body = { tasks_data, packet: condition.packet };
   } catch (error) {
     log.warn(
       `/tasks get |-> status:${error.jse_info.status} | message:${
@@ -390,18 +390,18 @@ router.post('/tasks', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const tasksData = await TaskController.createTask(condition);
-    logRequest(timeStart, ctx, condition, tasksData);
+    const tasks_data = await TaskController.createTask(condition);
+    logRequest(timeStart, ctx, condition, tasks_data);
 
     condition.status = 0;
     condition.type_el = 2;
-    condition.task_id = tasksData[0].id;
-    condition.group_id = tasksData[0].group_id;
+    condition.task_id = tasks_data[0].id;
+    condition.group_id = tasks_data[0].group_id;
 
-    const activityData = await ActivityController.createActivity(condition);
-    logRequest(timeStart, ctx, condition, activityData);
+    const data = await ActivityController.createActivity(condition);
+    logRequest(timeStart, ctx, condition, data.activity_data);
 
-    ctx.body = { data: tasksData, activity_data: activityData };
+    ctx.body = { tasks_data, activity_data: data.activity_data };
   } catch (error) {
     log.warn(
       `/tasks post |-> status:${error.jse_info.status} | message:${
@@ -419,7 +419,7 @@ router.post('/tasks', jwtMiddleware(), async ctx => {
  * @param {String} path - http path from METHOD
  * @param {function(ctx): Callback} response - to client
  * @returns { Response: Object }
- * @description Http METHOD. Call api function "deletTask" and responce data: JSON
+ * @description Http METHOD. Call api function "deleteTask" and responce data: JSON
  */
 router.del('/tasks', jwtMiddleware(), async ctx => {
   const timeStart = Date.now();
@@ -428,7 +428,7 @@ router.del('/tasks', jwtMiddleware(), async ctx => {
   try {
     const data = await TaskController.deleteTask(condition);
     logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data };
+    ctx.body = { ...data };
   } catch (error) {
     log.warn(
       `/tasks delete |-> status:${error.jse_info.status} | message:${
@@ -455,7 +455,7 @@ router.put('/tasks', jwtMiddleware(), async ctx => {
   try {
     const data = await TaskController.updateTask(condition);
     logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data };
+    ctx.body = { ...data };
   } catch (error) {
     log.warn(
       `/tasks put |-> status:${error.jse_info.status} | message:${
@@ -493,10 +493,10 @@ router.put('/tasks/order', jwtMiddleware(), async ctx => {
       return;
     }
 
-    const activityData = await ActivityController.createActivity(condition);
-    logRequest(timeStart, ctx, condition, activityData);
+    const activity_data = await ActivityController.createActivity(condition);
+    logRequest(timeStart, ctx, condition, activity_data);
 
-    ctx.body = { data: taskData.data, activity_data: activityData };
+    ctx.body = { tasks_data: taskData.data, activity_data };
   } catch (error) {
     log.warn(
       `/tasks/order put |-> status:${error.jse_info.status} | message:${
@@ -521,11 +521,16 @@ router.put('/tasks/order', jwtMiddleware(), async ctx => {
 router.get('/activity', jwtMiddleware(), async ctx => {
   const timeStart = Date.now();
   const condition = getCondition(ctx);
+  condition.type = 'last_element';
 
   try {
-    const data = await ActivityController.getActivity(condition);
-    logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data };
+    const activity_data = await ActivityController.getActivity(condition);
+    const restrictions_data = await ActivityController.getRestrictions(
+      condition,
+    );
+    logRequest(timeStart, ctx, condition, activity_data);
+
+    ctx.body = { activity_data, restrictions_data };
   } catch (error) {
     log.warn(
       `/activity get |-> status:${error.jse_info.status} | message:${
@@ -548,11 +553,17 @@ router.get('/activity', jwtMiddleware(), async ctx => {
 router.post('/activity', jwtMiddleware(), async ctx => {
   const timeStart = Date.now();
   const condition = getCondition(ctx);
+  condition.type = 'last_element';
 
   try {
     const data = await ActivityController.createActivity(condition);
+    const restrictions_data = await ActivityController.getRestrictions(
+      condition,
+    );
+
     logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data };
+
+    ctx.body = { ...data, restrictions_data };
   } catch (error) {
     log.warn(
       `/activity post |-> status:${error.jse_info.status} | message:${
@@ -577,12 +588,101 @@ router.put('/activity', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const data = await ActivityController.updateActivity(condition);
-    logRequest(timeStart, ctx, condition, data);
-    ctx.body = { data };
+    const activity_data = await ActivityController.updateActivity(condition);
+    logRequest(timeStart, ctx, condition, activity_data);
+    ctx.body = { activity_data };
   } catch (error) {
     log.warn(
       `/activity put |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/**
+ * @func router.del('/activity')
+ * @param {String} path - http path from METHOD
+ * @param {function(ctx): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "deleteActivity" and responce data: JSON
+ */
+router.del('/activity', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+  condition.type = 'last_element';
+
+  try {
+    const data = await ActivityController.deleteActivity(condition);
+    const restrictions_data = await ActivityController.getRestrictions(
+      condition,
+    );
+    logRequest(timeStart, ctx, condition, data);
+    ctx.body = { ...data, restrictions_data };
+  } catch (error) {
+    log.warn(
+      `/activity delete |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/**
+ * @func router.get('/activity/restrictions')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "getRestrictions" and responce data: JSON
+ */
+router.get('/activity/restrictions', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+
+  try {
+    const restrictions_data = await ActivityController.getRestrictions(
+      condition,
+    );
+    logRequest(timeStart, ctx, condition, restrictions_data);
+    ctx.body = { restrictions_data };
+  } catch (error) {
+    log.warn(
+      `/activity/restrictions get |-> status:${
+        error.jse_info.status
+      } | message:${error.message}`,
+    );
+  }
+});
+
+/**
+ * @func router.put('/activity/order')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "updatePosition" and responce data: JSON
+ */
+router.put('/activity/order', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+  condition.type = 'last_element';
+
+  try {
+    const activity_data = await ActivityController.updatePosition(condition);
+    const restrictions_data = await ActivityController.getRestrictions(
+      condition,
+    );
+    logRequest(timeStart, ctx, condition, activity_data);
+
+    ctx.body = { activity_data, restrictions_data };
+  } catch (error) {
+    log.warn(
+      `/activity/order put |-> status:${error.jse_info.status} | message:${
         error.message
       }`,
     );
