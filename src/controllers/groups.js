@@ -54,8 +54,10 @@ async function getGroups(conditions) {
   let pgGroupCondition = '';
   let pgSearchText = '';
   let pgLimit = '';
+  let mainGroups = false;
+  let queryText = '';
 
-  const params = [];
+  let params = [];
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
@@ -74,13 +76,17 @@ async function getGroups(conditions) {
     }
 
     if (conditionMustSet(conditions, 'userId')) {
-      pgUserGroups = `, user_groups AS (
-				SELECT gl.group_id FROM groups_list AS gl
-					WHERE (gl.group_id IN (SELECT * FROM main_visible_groups))
-						AND (gl.user_id = \$${params.length + 1}))`;
-      pgGroups = 'user_groups';
+      if (conditions.userId === 'main') {
+        mainGroups = true;
+      } else {
+        pgUserGroups = `, user_groups AS (
+          SELECT gl.group_id FROM groups_list AS gl
+            WHERE (gl.group_id IN (SELECT * FROM main_visible_groups))
+              AND (gl.user_id = \$${params.length + 1}))`;
+        pgGroups = 'user_groups';
 
-      params.push(conditions.userId);
+        params.push(conditions.userId);
+      }
     }
 
     if (conditionMustSet(conditions, 'like')) {
@@ -129,21 +135,44 @@ async function getGroups(conditions) {
 
   pgСonditions = pgParentCondition + pgGroupCondition + pgSearchText;
 
-  /* $1 = mainUser_id */
-  const queryText = `WITH RECURSIVE main_visible_groups AS (
-		SELECT group_id FROM groups_list AS gl
-			LEFT JOIN groups AS grp ON gl.group_id = grp.id
-			WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = $1)
-    ) 
-    ${pgUserGroups}
-    SELECT g.id, g.parent, g.name, g.group_type, g.owner, 
-      g.creating, g.reading, g.updating, g.deleting, 
-      g.el_reading, g.el_creating, g.el_updating, g.el_deleting,
-      gl.user_id, gl.user_type, gl.p, gl.q, g.depth, g.level
-		FROM groups_list AS gl
-		LEFT JOIN groups AS g ON gl.group_id = g.id
-		WHERE gl.group_id IN (SELECT * FROM ${pgGroups}) ${pgСonditions}
-		ORDER BY (gl.p::float8/gl.q) ${pgLimit};`;
+  if (mainGroups) {
+    queryText = `WITH RECURSIVE recursive_tree (id, parent, path, user_type, level) AS (
+      SELECT T1g.id, T1g.parent, CAST (T1g.id AS VARCHAR (50)) AS path, T1gl.user_type, 1
+        FROM groups_list AS T1gl
+      RIGHT JOIN groups AS T1g ON (T1gl.group_id = T1g.id)
+      WHERE T1g.parent IS NULL AND T1gl.user_id = $1
+        UNION
+      SELECT T2g.id, T2g.parent, CAST (recursive_tree.PATH ||'->'|| T2g.id AS VARCHAR(50)), T2gl.user_type, recursive_tree.level + 1
+        FROM groups_list AS T2gl
+      RIGHT JOIN groups AS T2g ON (T2gl.group_id = T2g.id)
+      INNER JOIN recursive_tree ON (recursive_tree.id = T2g.parent)
+    ) SELECT recursive_tree.id, recursive_tree.parent, grp.name, grp.group_type, grp.owner,
+        grp.creating, grp.reading, grp.updating, grp.deleting,
+        grp.el_reading, grp.el_creating, grp.el_updating, grp.el_deleting,
+        gl.user_id, recursive_tree.user_type, gl.p, gl.q, grp.depth, recursive_tree.level
+    FROM recursive_tree
+    LEFT JOIN groups AS grp ON recursive_tree.id = grp.id
+    LEFT JOIN groups_list AS gl ON (recursive_tree.id = gl.group_id) AND (gl.user_id = $1)
+    ORDER BY (gl.p::float8/gl.q);`;
+
+    params = [conditions.mainUser_id];
+  } else {
+    /* $1 = mainUser_id */
+    queryText = `WITH RECURSIVE main_visible_groups AS (
+      SELECT group_id FROM groups_list AS gl
+        LEFT JOIN groups AS grp ON gl.group_id = grp.id
+        WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = $1)
+      ) 
+      ${pgUserGroups}
+      SELECT g.id, g.parent, g.name, g.group_type, g.owner, 
+        g.creating, g.reading, g.updating, g.deleting, 
+        g.el_reading, g.el_creating, g.el_updating, g.el_deleting,
+        gl.user_id, gl.user_type, gl.p, gl.q, g.depth, g.level
+      FROM groups_list AS gl
+      LEFT JOIN groups AS g ON gl.group_id = g.id
+      WHERE gl.group_id IN (SELECT * FROM ${pgGroups}) ${pgСonditions}
+      ORDER BY (gl.p::float8/gl.q) ${pgLimit};`;
+  }
 
   const client = await pg.pool.connect();
 
@@ -288,7 +317,7 @@ async function updateGroup(conditions) {
         rows[0].reading <= rows[0].user_type &&
         rows[0].updating <= rows[0].user_type
       ) {
-        queryText = `UPDATE groups SET ${attributes} WHERE id = $1 RETURNING id;`;
+        queryText = `UPDATE groups SET ${attributes} WHERE id = $1 RETURNING id, name;`;
         result = await client.query(queryText, params);
       } else {
         return Promise.reject(
@@ -318,13 +347,13 @@ async function updateGroup(conditions) {
 }
 
 /**
- * @func removeGroup
+ * @func deleteGroup
  * @param {Object} - conditions
  * @returns { function(...args): Promise }
  * @description Delete exists group
  * conditions object = { mainUser_id: Number, id: char(8) }
  */
-async function removeGroup(conditions) {
+async function deleteGroup(conditions) {
   let onlyFromList = true; //eslint-disable-line
 
   try {
@@ -345,7 +374,7 @@ async function removeGroup(conditions) {
 
     await client.query('COMMIT');
 
-    return Promise.resolve({ id: rows[0].delete_group });
+    return Promise.resolve({ deleted_groups: [{ id: rows[0].delete_group }] });
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -469,6 +498,6 @@ module.exports = {
   getGroups,
   createGroup,
   updateGroup,
-  removeGroup,
+  deleteGroup,
   updatePosition,
 };

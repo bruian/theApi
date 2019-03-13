@@ -323,7 +323,8 @@ CREATE OR REPLACE FUNCTION create_activity (
 	_group_id 	 char(8),
 	_type_el 		 smallint,
 	_status			 smallint,
-	_start 			 timestamp with time zone
+	_start 			 timestamp with time zone,
+	_nextTail		 boolean
 )
 RETURNS char(8)[] LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT AS $body$
 DECLARE
@@ -337,6 +338,7 @@ DECLARE
 	el_creating 	 smallint;
 	prevId				 char(8);
 	prevStart			 timestamp with time zone;
+	prevEnds			 timestamp with time zone;
 	newEnds				 timestamp with time zone;
 	openedActivity char(8)[];
 BEGIN
@@ -382,8 +384,13 @@ BEGIN
 	  RAISE EXCEPTION 'No rights to create the element in the group';
 	END IF;
 
+	IF _nextTail = true THEN
+		_start := prevStart + interval '10 millisecond';
+	END IF;
+
+	prevEnds := null;
 	/* Проверка на попадание в допустимый диапазон */
-  SELECT activity.id, activity.start from activity, activity_list INTO prevId, prevStart
+  SELECT activity.id, activity.start from activity, activity_list INTO prevId, prevStart, prevEnds
     WHERE (activity_list.id = activity.id)
 			AND (activity_list.user_id = main_userId)
 			AND (activity.task_id = _task_id) 
@@ -392,7 +399,7 @@ BEGIN
 	IF FOUND AND prevStart > _start THEN
 		RAISE EXCEPTION 'The start property of a new activity should be later than other activities for the same task';
 	END IF;
-		
+	
 	/* Если запускается singular задача, то все открытые активности со статусом 1 или 5 должны быть приостановлены */
 	IF (isSingularTask = true) AND (COALESCE(_status, 0) = 1 OR COALESCE(_status, 0) = 5) THEN
 		/* Need close all opened activity */
@@ -484,10 +491,11 @@ DECLARE
 	prevStatus smallint;
 	prevId		char(8);
 	tempId		char(8);
+	currStatus smallint;
 BEGIN
 	/* Проверка на права для редактирования текущей активности, только пользователь
 		создавший активность может её переместить */
-	SELECT id into tempId FROM activity	WHERE (activity.owner = main_userId and activity.id = _activity_id);
+	SELECT id, status into tempId, currStatus FROM activity	WHERE (activity.owner = main_userId and activity.id = _activity_id);
 
 	IF NOT FOUND THEN
 		/* if SELECT return nothing */
@@ -527,7 +535,12 @@ BEGIN
 			RAISE EXCEPTION 'You can not position the current activity before the previous';
 		END IF;
 
-		UPDATE activity SET start = _start + interval '50 millisecond' WHERE id = _activity_id;
+		IF currStatus = 2 OR currStatus = 4 OR currStatus = 6 THEN
+			UPDATE activity SET start = _start + interval '50 millisecond', ends = _start + interval '50 millisecond' WHERE id = _activity_id;
+		ELSE
+			UPDATE activity SET start = _start + interval '50 millisecond' WHERE id = _activity_id;
+		END IF;
+		
 		changedActivity := array_append(changedActivity, _activity_id);
 
 		IF prevId IS NOT NULL THEN
@@ -555,11 +568,17 @@ CREATE OR REPLACE FUNCTION delete_activity (
 DECLARE
 	taskId char(8);
 	prevId char(8);
+	prevGroupId char(8);
+	curStatus smallint;
+	curGroupId char(8);
 	numActivity integer;
 BEGIN
 	/* Проверка на права для удаления текущей активности, только пользователь
 		создавший активность может её удалить */
-	SELECT task_id into taskId FROM activity WHERE (activity.owner = main_userId and activity.id = _activity_id);
+	SELECT a.task_id, a.status, al.group_id 
+		INTO taskId, curStatus, curGroupId FROM activity AS a
+	LEFT JOIN activity_list AS al ON (al.id = a.id) AND (al.user_id = main_userId)
+	WHERE (a.owner = main_userId and a.id = _activity_id);
 
 	IF NOT FOUND THEN
 		/* if SELECT return nothing */
@@ -580,7 +599,7 @@ BEGIN
 
 	WITH act AS (
     SELECT id, task_id, start, ends FROM activity WHERE id = _activity_id
-  ) SELECT a.id	INTO prevId FROM activity AS a
+  ) SELECT a.id, al.group_id INTO prevId, prevGroupId FROM activity AS a
 		LEFT JOIN act ON true
 		LEFT JOIN tasks AS t ON (a.task_id = t.id)
 		RIGHT JOIN activity_list AS al ON (al.id = a.id) AND (al.user_id = main_userId)
@@ -593,6 +612,12 @@ BEGIN
 
 	DELETE FROM activity WHERE (id = _activity_id);
 	DELETE FROM activity_list WHERE (id = _activity_id AND user_id = main_userId);
+
+	IF curStatus = 0 AND numActivity > 1 THEN
+		/* Удалена активность смены группы задачи, значит необходимо вернуть задачу к предыдущей группе */
+		perform task_place_list(prevGroupId, taskId, null, FALSE);
+		DELETE FROM tasks_list WHERE (group_id = curGroupId) AND (task_id = taskId);
+	END IF;
 
 	return prevId;
 END;
@@ -634,11 +659,15 @@ SELECT * from activity_list;
 select * from activity WHERE id = 'jkYol3V6';
 select * from activity WHERE id = 'OI1VaKyz';
 
-UPDATE activity SET ends = null WHERE id = 'N4FeQlMw';
+UPDATE activity SET ends = null WHERE id = 'bJy_rfrn';
 UPDATE activity SET ends = null WHERE id = 'OI1VaKyz';
 
-DELETE FROM activity WHERE id = 'm0JW3Rit';
-DELETE FROM activity WHERE id = '6FimCoSp';
+INSERT INTO activity_list (id, group_id, user_id, type_el) VALUES ('xajUpg70', 'ZNXkXEWt', 1, 2)
+
+DELETE FROM tasks WHERE id = 'n4xTNZbR';
+
+DELETE FROM activity WHERE id = 'uUnuGQ20';
+DELETE FROM activity_list WHERE id = 'xajUpg70' and group_id = 'GrYI0yqb';
 
 DELETE FROM activity;
 DELETE FROM activity_list;
@@ -647,28 +676,6 @@ DELETE FROM tasks_list;
 
 SELECT delete_activity(1, 'fbDFtXLP', true);
 
-WITH RECURSIVE main_visible_groups AS (
-	SELECT group_id FROM groups_list AS gl
-	LEFT JOIN groups AS grp ON gl.group_id = grp.id
-	WHERE (grp.reading >= gl.user_type)
-		AND (grp.el_reading >= gl.user_type)
-		AND (gl.user_id = 0 OR gl.user_id = 1)
-	), last_activity AS (
-		select true as isLast, id from activity ORDER BY start DESC LIMIT 1
-	)	SELECT al.id, al.group_id, al.user_id, act.task_id, al.type_el,
-		tsk.name, act.note, act.productive, uf.url as avatar,
-		act.part, act.status, act.owner, act.start, act.ends, tsk.singular,
-		la.isLast
-	FROM activity_list AS al
-	LEFT JOIN last_activity AS la ON al.id = la.id
-	LEFT JOIN activity AS act ON al.id = act.id
-	LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
-	LEFT JOIN tasks AS tsk ON (act.task_id = tsk.id)
-	WHERE al.group_id IN (SELECT * FROM main_visible_groups) 
-	ORDER BY ((act.status = 1 or act.status = 5) and act.ends is null) DESC, act.start DESC;
-
-SELECT reorder_activity(1, 'gcwjB9_P', '2019-03-07T15:35:39.132Z', null);
-									  
 WITH RECURSIVE main_visible_groups AS (
 	SELECT group_id FROM groups_list AS gl
 	LEFT JOIN groups AS grp ON gl.group_id = grp.id
@@ -702,3 +709,30 @@ WITH RECURSIVE main_visible_groups AS (
 		JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
 		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
 		WHERE tl.task_id = 'Ta63o7yX';
+
+WITH RECURSIVE main_visible_groups AS (
+	SELECT group_id FROM groups_list AS gl
+		LEFT JOIN groups AS grp ON gl.group_id = grp.id
+		WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
+	), 
+  acts(duration, task_id) AS (
+		SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+			act.task_id FROM activity_list AS al
+		JOIN activity AS act ON (act.id = al.id)
+		WHERE (al.user_id = 1)
+			AND (al.group_id IN (SELECT * FROM main_visible_groups))
+			AND (act.status = 1 OR act.status = 5)
+		GROUP BY act.task_id
+	)
+	SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent,
+		(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration, 
+		-- act.status, act.start, 
+		t.depth, t.level, t.singular
+	FROM tasks_list AS tl
+	JOIN tasks AS t ON tl.task_id = t.id
+	-- JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
+	-- JOIN activity AS act ON (act.task_id = tl.task_id) 
+		-- AND (act.ends IS NULL OR act.status = 2 OR act.status = 4 OR act.status = 6) 
+		-- AND (act.id = al.id)
+	WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND t.parent is null
+	ORDER BY tl.group_id, (tl.p::float8/tl.q) LIMIT 10 OFFSET 0;

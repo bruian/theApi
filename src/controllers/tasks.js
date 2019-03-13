@@ -452,11 +452,14 @@ async function updatePosition(conditions) {
   let isBefore = false;
   let parent_id = null;
   let position = null;
+  let nextTail = false;
+  let activityElements;
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'group_id');
     conditionMustBeSet(conditions, 'id');
+    conditionMustBeSet(conditions, 'start');
 
     if (
       conditionMustSet(conditions, 'position') &&
@@ -492,16 +495,20 @@ async function updatePosition(conditions) {
           ? conditions.isBefore
           : conditions.isBefore === 'true';
     }
+
+    if (conditionMustSet(conditions, 'next_tail')) {
+      nextTail = conditions.next_tail; // eslint-disable-line
+    }
   } catch (error) {
     throw error;
   }
 
   const client = await pg.pool.connect();
 
-  const returnObject = { id: conditions.id, groupChanged: false, data: null };
+  const returnObject = { tasks_data: undefined, activity_data: undefined };
 
   try {
-    await client.query('begin');
+    await client.query('BEGIN');
 
     let queryText = `SELECT reorder_task($1, $2, $3, $4, $5, $6);`;
     let params = [
@@ -518,25 +525,55 @@ async function updatePosition(conditions) {
     /* значение 2 говорит о том, что сменилась группа, а значит необходимо сказать об этом
 			функции create_activity для создания новой активности, в обработчике api */
     if (rows[0].reorder_task === 2) {
-      returnObject.groupChanged = true;
+      params = [
+        conditions.mainUser_id,
+        conditions.id, // task_id
+        conditions.group_id,
+        2, // type_el
+        0, // status
+        conditions.start,
+        nextTail,
+      ];
+
+      const result = await client.query(
+        'SELECT create_activity($1, $2, $3, $4, $5, $6, $7)',
+        params,
+      );
+      activityElements = result.rows[0].create_activity;
     }
 
+    await client.query('COMMIT');
+
     queryText = `
-      SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent, t.depth, t.level, t.singular
-      FROM tasks_list AS tl
-      RIGHT JOIN tasks AS t ON tl.task_id = t.id
-      WHERE tl.task_id IN (SELECT * FROM UNNEST($1::varchar[]))
-      ORDER BY tl.group_id, (tl.p::float8/tl.q);`;
+		SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent, t.depth, t.level, t.singular
+		FROM tasks_list AS tl
+		RIGHT JOIN tasks AS t ON tl.task_id = t.id
+		WHERE tl.task_id IN (SELECT * FROM UNNEST($1::varchar[]))
+		ORDER BY tl.group_id, (tl.p::float8/tl.q);`;
 
     const tsks = [conditions.id];
     if (position) tsks.push(position);
 
-    params = [tsks];
+    const { rows: tasks_data } = await client.query(queryText, [tsks]);
+    returnObject.tasks_data = tasks_data;
 
-    const { rows: tasks } = await client.query(queryText, params);
-    returnObject.data = tasks;
+    if (rows[0].reorder_task === 2) {
+      // Получение данных по измененным элементам
+      queryText = `SELECT al.id, al.group_id, al.user_id, al.type_el,
+				act.task_id, t.name, t.singular, act.note, act.productive, act.part,
+				act.status, act.owner, act.start, act.ends, uf.url as avatar
+			FROM activity_list AS al
+			LEFT JOIN activity AS act ON al.id = act.id
+			LEFT JOIN tasks AS t ON act.task_id = t.id
+			LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
+			WHERE act.id IN (SELECT * FROM UNNEST($1::varchar[]))
+			ORDER BY act.start DESC;`;
 
-    await client.query('commit');
+      const { rows: activity_data } = await client.query(queryText, [
+        activityElements,
+      ]);
+      returnObject.activity_data = activity_data;
+    }
 
     return Promise.resolve(returnObject);
   } catch (error) {

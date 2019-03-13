@@ -480,7 +480,7 @@ WHERE (groups_list.group_id = groups.id)
 	AND (groups_list.user_type >= groups.reading);
 */
 
-/* Запрос всей иерархии группы
+/* Запрос всей иерархии группы */
 WITH RECURSIVE recursive_tree (id, parent, path, user_type, level) AS (
 	SELECT T1g.id, T1g.parent, CAST (T1g.id AS VARCHAR (50)) AS path, T1gl.user_type, 1
     FROM groups_list AS T1gl
@@ -497,7 +497,7 @@ SELECT recursive_tree.id, recursive_tree.user_type, grp.name, recursive_tree.par
 	   grp.el_reading, grp.el_updating, grp.el_deleting, grp.group_type FROM recursive_tree
 LEFT JOIN groups AS grp ON recursive_tree.id = grp.id
 ORDER BY path;
-*/
+
 
 /* Запрос всех групп первого уровня не принадлежащие main user. Ограничение по: видимости main user */
 /* AND grp.reading >= gl.user_type ограничение видимости группы по типу пользователя
@@ -515,24 +515,41 @@ SELECT group_id, user_type, name, parent, creating, reading, updating, deleting,
 LIMIT 10 OFFSET 0
 */
 
-/* Main groups tree
+/* Main groups tree */
 WITH RECURSIVE recursive_tree (id, parent, path, user_type, level) AS (
 	SELECT T1g.id, T1g.parent, CAST (T1g.id AS VARCHAR (50)) AS path, T1gl.user_type, 1
     FROM groups_list AS T1gl
 	RIGHT JOIN groups AS T1g ON (T1gl.group_id = T1g.id)
 	WHERE T1g.parent IS NULL AND T1gl.user_id = 1
 		UNION
-	SELECT T2g.id, T2g.parent, CAST (recursive_tree.PATH ||'->'|| T2g.id AS VARCHAR(50)), T2gl.user_type, level + 1
+	SELECT T2g.id, T2g.parent, CAST (recursive_tree.PATH ||'->'|| T2g.id AS VARCHAR(50)), T2gl.user_type, recursive_tree.level + 1
     FROM groups_list AS T2gl
 	RIGHT JOIN groups AS T2g ON (T2gl.group_id = T2g.id)
 	INNER JOIN recursive_tree ON (recursive_tree.id = T2g.parent)
-) select * from recursive_tree
-SELECT recursive_tree.id, recursive_tree.user_type, grp.name, recursive_tree.parent, recursive_tree.level, recursive_tree.path,
+) SELECT recursive_tree.id, recursive_tree.user_type, grp.name, recursive_tree.parent, recursive_tree.level, recursive_tree.path,
 	   grp.creating, grp.reading, grp.updating, grp.deleting, grp.el_creating,
 	   grp.el_reading, grp.el_updating, grp.el_deleting, grp.group_type FROM recursive_tree
 LEFT JOIN groups AS grp ON recursive_tree.id = grp.id
 ORDER BY path;
-*/
+
+WITH RECURSIVE recursive_tree (id, parent, path, user_type, level) AS (
+      SELECT T1g.id, T1g.parent, CAST (T1g.id AS VARCHAR (50)) AS path, T1gl.user_type, 1
+        FROM groups_list AS T1gl
+      RIGHT JOIN groups AS T1g ON (T1gl.group_id = T1g.id)
+      WHERE T1g.parent IS NULL AND T1gl.user_id = 1
+        UNION
+      SELECT T2g.id, T2g.parent, CAST (recursive_tree.PATH ||'->'|| T2g.id AS VARCHAR(50)), T2gl.user_type, recursive_tree.level + 1
+        FROM groups_list AS T2gl
+      RIGHT JOIN groups AS T2g ON (T2gl.group_id = T2g.id)
+      INNER JOIN recursive_tree ON (recursive_tree.id = T2g.parent)
+    ) SELECT recursive_tree.id, recursive_tree.parent, grp.name, grp.group_type, grp.owner,
+        grp.creating, grp.reading, grp.updating, grp.deleting,
+        grp.el_reading, grp.el_creating, grp.el_updating, grp.el_deleting,
+        gl.user_id, recursive_tree.user_type, gl.p, gl.q, grp.depth, recursive_tree.level
+    FROM recursive_tree
+    LEFT JOIN groups AS grp ON recursive_tree.id = grp.id
+    LEFT JOIN groups_list AS gl ON (recursive_tree.id = gl.group_id) AND (gl.user_id = 1)
+    ORDER BY (gl.p::float8/gl.q);
 
 /****************
 SELECT user_id, group_id, owner, user_type, name, parent, creating, reading, updating, deleting, el_creating, el_reading, el_updating, el_deleting, group_type FROM groups_list AS gl

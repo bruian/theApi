@@ -213,11 +213,10 @@ async function createActivity(conditions) {
   let task_id = null;
   let start = null;
   let status = null;
-  // const isStart = false;
+  let nextTail = false;
 
   let queryText = '';
   let params = [];
-  // const returnElements = [];
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
@@ -253,12 +252,9 @@ async function createActivity(conditions) {
       status = Number(conditions.status); // eslint-disable-line
     }
 
-    // if (conditionMustSet(conditions, 'isStart')) {
-    //   isStart =
-    //     typeof conditions.isStart === 'boolean'
-    //       ? conditions.isStart
-    //       : conditions.isStart === 'true';
-    // }
+    if (conditionMustSet(conditions, 'next_tail')) {
+      nextTail = conditions.next_tail; // eslint-disable-line
+    }
   } catch (error) {
     throw error;
   }
@@ -290,10 +286,11 @@ async function createActivity(conditions) {
       Number(conditions.type_el),
       status,
       start,
+      nextTail,
     ];
 
     const { rows: newElements } = await client.query(
-      'SELECT create_activity($1, $2, $3, $4, $5, $6)',
+      'SELECT create_activity($1, $2, $3, $4, $5, $6, $7)',
       params,
     );
     const changedActivityArr = newElements[0].create_activity;
@@ -451,6 +448,8 @@ async function updateActivity(conditions) {
  * conditions object = { mainUser_id: Number,	id: char(8) }
  */
 async function deleteActivity(conditions) {
+  /* Проверка удаления самой первой активности, по-умолчанию всегда должна существовать и 
+		может удаляться только когда удаляется задача к этой активности */
   let checkOne = true;
 
   try {
@@ -488,7 +487,8 @@ async function deleteActivity(conditions) {
       WHERE (act.task_id IN (SELECT * FROM UNNEST($2::varchar[])))
         AND (act.status = 1 OR act.status = 5)
       GROUP BY act.task_id
-    )	SELECT t.id, act.status, (SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration, act.start
+    )	SELECT t.id, act.status, al.group_id,
+        (SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration, act.start
       FROM tasks_list AS tl
       RIGHT JOIN tasks AS t ON tl.task_id = t.id
       JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = $1)

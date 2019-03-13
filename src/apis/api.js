@@ -142,9 +142,9 @@ router.get('/groups', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const data = await GroupController.getGroups(condition);
-    logRequest(timeStart, ctx, condition, data);
-    ctx.body = { action: 'getGroups', data, packet: condition.packet };
+    const groups_data = await GroupController.getGroups(condition);
+    logRequest(timeStart, ctx, condition, groups_data);
+    ctx.body = { groups_data, packet: condition.packet };
   } catch (error) {
     log.warn(
       `/groups get|-> status:${error.jse_info.status} | message:${
@@ -169,9 +169,9 @@ router.post('/groups', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const data = await GroupController.createGroup(condition);
-    logRequest(timeStart, ctx, condition, data);
-    ctx.body = { action: 'createGroup', data };
+    const groups_data = await GroupController.createGroup(condition);
+    logRequest(timeStart, ctx, condition, groups_data);
+    ctx.body = { groups_data };
   } catch (error) {
     log.warn(
       `/groups post |-> status:${error.jse_info.status} | message:${
@@ -196,9 +196,9 @@ router.del('/groups', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const data = await GroupController.removeGroup(condition);
+    const data = await GroupController.deleteGroup(condition);
     logRequest(timeStart, ctx, condition, data);
-    ctx.body = { action: 'removeGroup', data };
+    ctx.body = { ...data };
   } catch (error) {
     log.warn(
       `/groups delete |-> status:${error.jse_info.status} | message:${
@@ -223,9 +223,9 @@ router.put('/groups', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const data = await GroupController.updateGroup(condition);
-    logRequest(timeStart, ctx, condition, data);
-    ctx.body = { action: 'updateGroup', data };
+    const groups_data = await GroupController.updateGroup(condition);
+    logRequest(timeStart, ctx, condition, groups_data);
+    ctx.body = { groups_data };
   } catch (error) {
     log.warn(
       `/groups put |-> status:${error.jse_info.status} | message:${
@@ -250,10 +250,10 @@ router.put('/groups/order', jwtMiddleware(), async ctx => {
   const condition = getCondition(ctx);
 
   try {
-    const data = await GroupController.updatePosition(condition);
-    logRequest(timeStart, ctx, condition, data);
+    const groups_data = await GroupController.updatePosition(condition);
+    logRequest(timeStart, ctx, condition, groups_data);
 
-    ctx.body = { action: 'updatePosition', data };
+    ctx.body = { groups_data };
   } catch (error) {
     log.warn(
       `/groups/order put |-> status:${error.jse_info.status} | message:${
@@ -397,11 +397,19 @@ router.post('/tasks', jwtMiddleware(), async ctx => {
     condition.type_el = 2;
     condition.task_id = tasks_data[0].id;
     condition.group_id = tasks_data[0].group_id;
+    condition.type = 'last_element';
 
     const data = await ActivityController.createActivity(condition);
+    const restrictions_data = await ActivityController.getRestrictions(
+      condition,
+    );
     logRequest(timeStart, ctx, condition, data.activity_data);
 
-    ctx.body = { tasks_data, activity_data: data.activity_data };
+    ctx.body = {
+      tasks_data,
+      activity_data: data.activity_data,
+      restrictions_data,
+    };
   } catch (error) {
     log.warn(
       `/tasks post |-> status:${error.jse_info.status} | message:${
@@ -478,25 +486,16 @@ router.put('/tasks', jwtMiddleware(), async ctx => {
 router.put('/tasks/order', jwtMiddleware(), async ctx => {
   const timeStart = Date.now();
   const condition = getCondition(ctx);
+  condition.type = 'last_element';
 
   try {
-    const taskData = await TaskController.updatePosition(condition);
-    logRequest(timeStart, ctx, condition, taskData);
+    const data = await TaskController.updatePosition(condition);
+    const restrictions_data = await ActivityController.getRestrictions(
+      condition,
+    );
+    logRequest(timeStart, ctx, condition, data);
 
-    condition.status = 0;
-    condition.type_el = 2;
-    condition.task_id = condition.id;
-    condition.group_id = condition.group_id;
-
-    if (!taskData.groupChanged) {
-      ctx.body = { data: taskData.data, activity_data: null };
-      return;
-    }
-
-    const activity_data = await ActivityController.createActivity(condition);
-    logRequest(timeStart, ctx, condition, activity_data);
-
-    ctx.body = { tasks_data: taskData.data, activity_data };
+    ctx.body = { ...data, restrictions_data };
   } catch (error) {
     log.warn(
       `/tasks/order put |-> status:${error.jse_info.status} | message:${
