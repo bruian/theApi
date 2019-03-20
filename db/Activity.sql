@@ -338,7 +338,6 @@ DECLARE
 	el_creating 	 smallint;
 	prevId				 char(8);
 	prevStart			 timestamp with time zone;
-	prevEnds			 timestamp with time zone;
 	newEnds				 timestamp with time zone;
 	openedActivity char(8)[];
 BEGIN
@@ -385,16 +384,24 @@ BEGIN
 	END IF;
 
 	IF _nextTail = true THEN
-		_start := prevStart + interval '10 millisecond';
-	END IF;
+		SELECT activity.id, activity.start 
+			INTO prevId, prevStart 
+		FROM activity, activity_list
+		WHERE (activity_list.id = activity.id)
+			AND (activity_list.user_id = main_userId)
+		ORDER BY start DESC LIMIT 1;
 
-	prevEnds := null;
-	/* Проверка на попадание в допустимый диапазон */
-  SELECT activity.id, activity.start from activity, activity_list INTO prevId, prevStart, prevEnds
-    WHERE (activity_list.id = activity.id)
+		_start := prevStart + interval '10 millisecond';
+	ELSE
+		/* Проверка на попадание в допустимый диапазон */
+		SELECT activity.id, activity.start 
+			INTO prevId, prevStart 
+		FROM activity, activity_list
+		WHERE (activity_list.id = activity.id)
 			AND (activity_list.user_id = main_userId)
 			AND (activity.task_id = _task_id) 
 		ORDER BY start DESC LIMIT 1;
+	END IF;
 
 	IF FOUND AND prevStart > _start THEN
 		RAISE EXCEPTION 'The start property of a new activity should be later than other activities for the same task';
@@ -659,12 +666,13 @@ SELECT * from activity_list;
 select * from activity WHERE id = 'jkYol3V6';
 select * from activity WHERE id = 'OI1VaKyz';
 
-UPDATE activity SET ends = null WHERE id = 'bJy_rfrn';
+UPDATE activity SET start = '2018-08-16T10:00:00.260Z' WHERE id = 'TsbAyEcs';
 UPDATE activity SET ends = null WHERE id = 'OI1VaKyz';
 
 INSERT INTO activity_list (id, group_id, user_id, type_el) VALUES ('xajUpg70', 'ZNXkXEWt', 1, 2)
 
-DELETE FROM tasks WHERE id = 'n4xTNZbR';
+DELETE FROM tasks WHERE id = 'mrjsAy9z';
+DELETE FROM tasks_list WHERE task_id = 'mrjsAy9z';
 
 DELETE FROM activity WHERE id = 'uUnuGQ20';
 DELETE FROM activity_list WHERE id = 'xajUpg70' and group_id = 'GrYI0yqb';
@@ -710,29 +718,27 @@ WITH RECURSIVE main_visible_groups AS (
 		JOIN activity AS act ON (act.task_id = tl.task_id) AND (act.ends IS NULL) AND (act.id = al.id)
 		WHERE tl.task_id = 'Ta63o7yX';
 
-WITH RECURSIVE main_visible_groups AS (
-	SELECT group_id FROM groups_list AS gl
-		LEFT JOIN groups AS grp ON gl.group_id = grp.id
-		WHERE grp.reading >= gl.user_type AND (gl.user_id = 0 OR gl.user_id = 1)
-	), 
-  acts(duration, task_id) AS (
-		SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
-			act.task_id FROM activity_list AS al
+	SELECT sum(duration.productive_duration) as productive_duration, sum(duration.unproductive_duration) AS unproductive_duration FROM (
+		SELECT COALESCE(SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)), 0) as productive_duration, 
+			0::float as unproductive_duration
+		FROM activity_list AS al
 		JOIN activity AS act ON (act.id = al.id)
+		LEFT JOIN tasks AS t ON (act.task_id = t.id)
 		WHERE (al.user_id = 1)
-			AND (al.group_id IN (SELECT * FROM main_visible_groups))
+			AND (t.productive = true)
 			AND (act.status = 1 OR act.status = 5)
-		GROUP BY act.task_id
-	)
-	SELECT t.id, tl.group_id, tl.p, tl.q,	t.tid, t.name, t.owner,	t.note, t.parent,
-		(SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration, 
-		-- act.status, act.start, 
-		t.depth, t.level, t.singular
-	FROM tasks_list AS tl
-	JOIN tasks AS t ON tl.task_id = t.id
-	-- JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = 1)
-	-- JOIN activity AS act ON (act.task_id = tl.task_id) 
-		-- AND (act.ends IS NULL OR act.status = 2 OR act.status = 4 OR act.status = 6) 
-		-- AND (act.id = al.id)
-	WHERE tl.group_id IN (SELECT * FROM main_visible_groups)  AND t.parent is null
-	ORDER BY tl.group_id, (tl.p::float8/tl.q) LIMIT 10 OFFSET 0;
+			AND (act.start between '2018-08-17'::date and '2018-08-17'::date + 1)
+		UNION ALL
+		SELECT 0::float as productive_duration, 
+			COALESCE(SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)), 0) as unproductive_duration 
+		FROM activity_list AS al
+		JOIN activity AS act ON (act.id = al.id)
+		LEFT JOIN tasks AS t ON (act.task_id = t.id)
+		WHERE (al.user_id = 1)
+			AND (t.productive = false)
+			AND (act.status = 1 OR act.status = 5)
+			AND (act.start between '2018-08-17'::date and '2018-08-17'::date + 1)
+	) AS duration
+
+UPDATE tasks SET productive = false WHERE id = 'gS1aNryQ';
+SELECT * FROM tasks;

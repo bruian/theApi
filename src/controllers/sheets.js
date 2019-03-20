@@ -51,7 +51,17 @@ async function getSheets(conditions) {
 			SELECT value::TEXT
 			FROM sheets_conditions
 			WHERE sheet_id=sh.id
-		)) AS values
+    )) AS conditionValues,
+    (SELECT ARRAY(
+			SELECT vision::integer
+			FROM sheets_visions
+			WHERE sheet_id=sh.id
+		)) AS visions,
+		(SELECT ARRAY(
+			SELECT value::TEXT
+			FROM sheets_visions
+			WHERE sheet_id=sh.id
+		)) AS visionValues
 	FROM sheets AS sh WHERE user_id = $1;`;
 
   const client = await pg.pool.connect();
@@ -85,8 +95,10 @@ async function updateSheet(conditions) {
   let attributes = '';
   let returning = ' RETURNING id';
   let cond = '';
+  let visi = '';
 
   const conditionsParams = [];
+  const visionsParams = [];
   const params = [];
 
   try {
@@ -105,19 +117,19 @@ async function updateSheet(conditions) {
     switch (prop) {
       case 'name':
         // eslint-disable-next-line
-        attributes = `${attributes} name = \$${params.length + 1}`;
+        attributes = `${attributes} name = \$${params.length + 1},`;
         returning = `${returning}, name`;
         params.push(conditions[prop]);
         break;
       case 'visible':
         // eslint-disable-next-line
-        attributes = `${attributes} visible = \$${params.length + 1}`;
+        attributes = `${attributes} visible = \$${params.length + 1},`;
         returning = `${returning}, visible`;
         params.push(conditions[prop] === 'true');
         break;
       case 'layout':
         // eslint-disable-next-line
-        attributes = `${attributes} layout = \$${params.length + 1}`;
+        attributes = `${attributes} layout = \$${params.length + 1},`;
         returning = `${returning}, layout`;
         params.push(Number(conditions[prop]));
         break;
@@ -149,13 +161,34 @@ async function updateSheet(conditions) {
 
         cond = cond.substring(0, cond.length - 1);
         break;
+      case 'vision':
+        visionsParams.push(conditions.id);
+
+        Object.keys(conditions[prop]).forEach(key => {
+          switch (key) {
+            case 'activityStatus':
+              visi = `${visi} ($1, 1, \$${visionsParams.length + 1}),`;
+              break;
+            default:
+              break;
+          }
+
+          visionsParams.push(conditions[prop][key]);
+        });
+
+        visi = visi.substring(0, visi.length - 1);
+        break;
       default:
         break;
     }
   });
 
   /* Если ничего не передано для изменения, то нет смысла делать запрос к базе */
-  if (attributes.length === 0 && conditionsParams.length === 0) {
+  if (
+    attributes.length === 0 &&
+    conditionsParams.length === 0 &&
+    visionsParams.length === 0
+  ) {
     throw new VError(
       {
         name: 'WrongBody',
@@ -165,38 +198,59 @@ async function updateSheet(conditions) {
     );
   }
 
+  if (attributes.length > 0) {
+    attributes = attributes.substring(0, attributes.length - 1);
+  }
+
   /* Обновляем только те элементы задач, которые состоят в доступных пользователю группах */
   const queryText = `
 		UPDATE sheets SET ${attributes} WHERE (user_id = $1) AND (id = $2)
 		${returning};`;
 
   const querySheetsConditions = `
-		INSERT INTO sheets_conditions (sheet_id, condition, value) VALUES ${conditions}
+		INSERT INTO sheets_conditions (sheet_id, condition, value) VALUES ${cond}
 		ON CONFLICT (sheet_id, condition) DO UPDATE SET value = EXCLUDED.value
-		RETURNING sheet_id as id, condition, value;`;
+		RETURNING condition, value;`;
+
+  const querySheetsVisions = `
+    INSERT INTO sheets_visions (sheet_id, vision, value) VALUES ${visi}
+    ON CONFLICT (sheet_id, vision) DO UPDATE SET value = EXCLUDED.value
+    RETURNING vision, value;`;
 
   const client = await pg.pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    let elements;
+    let result;
+    let elements = {
+      id: conditions.id,
+    };
+
     if (attributes.length > 0) {
-      const result = await client.query(queryText, params);
-      elements = result.rows;
+      result = await client.query(queryText, params);
+      elements = Object.assign(elements, result.rows[0]);
     }
 
     if (conditionsParams.length > 0) {
-      const result = await client.query(
-        querySheetsConditions,
-        conditionsParams,
-      );
-      elements = result.rows;
+      result = await client.query(querySheetsConditions, conditionsParams);
+      elements = Object.assign(elements, {
+        conditions: [result.rows[0].condition],
+        conditionvalues: [result.rows[0].value],
+      });
     }
 
-    await client.query('commit');
+    if (visionsParams.length > 0) {
+      result = await client.query(querySheetsVisions, visionsParams);
+      elements = Object.assign(elements, {
+        visions: [result.rows[0].vision],
+        visionvalues: [result.rows[0].value],
+      });
+    }
 
-    return Promise.resolve(elements);
+    await client.query('COMMIT');
+
+    return Promise.resolve([elements]);
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -275,10 +329,15 @@ async function createSheet(conditions) {
         elements[i].conditions = [];
         elements[i].values = [];
       }
+
+      if (!Object.prototype.hasOwnProperty.call(elements[i], 'visions')) {
+        elements[i].visions = [];
+        elements[i].visionValues = [];
+      }
     }
 
     // Фиксация транзакции
-    await client.query('commit');
+    await client.query('COMMIT');
 
     return Promise.resolve(elements);
   } catch (error) {
@@ -322,7 +381,7 @@ async function deleteSheet(conditions) {
 
     await client.query(queryText, params);
 
-    await client.query('commit');
+    await client.query('COMMIT');
 
     return Promise.resolve({ id: conditions.id });
   } catch (error) {

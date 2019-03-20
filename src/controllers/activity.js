@@ -560,7 +560,7 @@ async function getRestrictions(conditions) {
           ORDER BY a.start DESC
           LIMIT 1;`;
   } else if (conditions.type === 'last_element') {
-    queryText = `select true as isLast, activity.id from activity, activity_list
+    queryText = `select true as isLast, activity.start, activity.id from activity, activity_list
       WHERE activity_list.id = activity.id AND activity_list.user_id = $1 ORDER BY start DESC LIMIT 1`;
   } else {
     throw new VError(
@@ -576,6 +576,34 @@ async function getRestrictions(conditions) {
   try {
     const { rows: elements } = await client.query(queryText, params);
 
+    // queryText = `SELECT sum(duration.productive_duration) as productive_duration, sum(duration.unproductive_duration) AS unproductive_duration FROM (
+    //   SELECT COALESCE(SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)), 0) as productive_duration,
+    //     0::float as unproductive_duration
+    //   FROM activity_list AS al
+    //   JOIN activity AS act ON (act.id = al.id)
+    //   LEFT JOIN tasks AS t ON (act.task_id = t.id)
+    //   WHERE (al.user_id = $1)
+    //     AND (t.productive = true)
+    //     AND (act.status = 1 OR act.status = 5)
+    //     AND (act.start between $2::date and $2::date + 1)
+    //   UNION ALL
+    //   SELECT 0::float as productive_duration,
+    //     COALESCE(SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)), 0) as unproductive_duration
+    //   FROM activity_list AS al
+    //   JOIN activity AS act ON (act.id = al.id)
+    //   LEFT JOIN tasks AS t ON (act.task_id = t.id)
+    //   WHERE (al.user_id = $1)
+    //     AND (t.productive = false)
+    //     AND (act.status = 1 OR act.status = 5)
+    //     AND (act.start between $2::date and $2::date + 1)
+    // ) AS duration;`;
+
+    // const { rows: durations } = await client.query(queryText, [
+    //   conditions.mainUser_id,
+    //   elements[0].start,
+    // ]);
+
+    // return Promise.resolve([{ ...elements[0], ...durations[0] }]);
     return Promise.resolve(elements);
   } catch (error) {
     throw new VError(
@@ -642,22 +670,38 @@ async function updatePosition(conditions) {
 
   try {
     await client.query('BEGIN');
-
     const { rows } = await client.query(queryText, params);
+    await client.query('COMMIT');
 
     const changedActivityArr = rows[0].reorder_activity;
 
     // Получение данных по измененным элементам
-    queryText = `SELECT act.id, act.start, act.ends FROM activity AS act 
+    queryText = `SELECT act.id, act.task_id, act.start, act.ends FROM activity AS act 
     WHERE act.id IN (SELECT * FROM UNNEST($1::varchar[]))
     ORDER BY act.start DESC;`;
     params = [changedActivityArr];
 
-    const { rows: elements } = await client.query(queryText, params);
+    const { rows: activity_data } = await client.query(queryText, params);
 
-    await client.query('COMMIT');
+    queryText = `WITH acts(duration, task_id) AS (
+      SELECT SUM(extract(EPOCH from act.ends) - extract(EPOCH from act.start)) as duration,
+        act.task_id FROM activity_list AS al
+      JOIN activity AS act ON (act.id = al.id)
+      WHERE (act.task_id IN (SELECT * FROM UNNEST($2::varchar[])))
+        AND (act.status = 1 OR act.status = 5)
+      GROUP BY act.task_id
+    )	SELECT t.id, (SELECT duration FROM acts WHERE acts.task_id = tl.task_id) * 1000 AS duration, act.start
+      FROM tasks_list AS tl
+      RIGHT JOIN tasks AS t ON tl.task_id = t.id
+      JOIN activity_list AS al ON (al.group_id = tl.group_id) AND (al.user_id = $1)
+      JOIN activity AS act ON (act.task_id = tl.task_id) 
+        AND (act.ends IS NULL OR act.status = 2 OR act.status = 4 OR act.status = 6) 
+        AND (act.id = al.id)
+      WHERE tl.task_id IN (SELECT * FROM UNNEST($2::varchar[]));`;
+    params = [conditions.mainUser_id, activity_data.map(el => el.task_id)];
+    const { rows: tasks_data } = await client.query(queryText, params);
 
-    return Promise.resolve(elements);
+    return Promise.resolve({ activity_data, tasks_data });
   } catch (error) {
     await client.query('ROLLBACK');
 
@@ -681,250 +725,3 @@ module.exports = {
   getRestrictions,
   updatePosition,
 };
-
-// eslint-disable-next-line
-async function deprecatedCreateActivity(conditions) {
-  let task_id = null;
-  let start = null;
-  let status = null;
-  let isStart = false;
-
-  let queryText = '';
-  let params = [];
-  const returnElements = [];
-
-  try {
-    conditionMustBeSet(conditions, 'mainUser_id');
-    conditionMustBeSet(conditions, 'group_id');
-    conditionMustBeSet(conditions, 'type_el');
-    conditionMustBeSet(conditions, 'start');
-
-    const valid = /^(-?(?:[1-9][0-9]*)?[0-9]{4})-(1[0-2]|0[1-9])-(3[01]|0[1-9]|[12][0-9])T(2[0-3]|[01][0-9]):([0-5][0-9]):([0-5][0-9]).([0-9]+)?(Z)?$/.test(
-      conditions.start,
-    );
-
-    if (!valid) {
-      throw new VError(
-        {
-          info: {
-            parameter: 'start',
-            value: conditions.start,
-            status: 400 /* Bad request */,
-          },
-        },
-        'WrongParameterStart',
-      );
-    }
-
-    start = conditions.start; // eslint-disable-line
-
-    if (Number(conditions.type_el) === 2) {
-      conditionMustBeSet(conditions, 'task_id');
-      task_id = conditions.task_id; // eslint-disable-line
-    }
-
-    if (conditionMustSet(conditions, 'status')) {
-      status = conditions.status; // eslint-disable-line
-    }
-
-    if (conditionMustSet(conditions, 'isStart')) {
-      isStart =
-        typeof conditions.isStart === 'boolean'
-          ? conditions.isStart
-          : conditions.isStart === 'true';
-    }
-  } catch (error) {
-    throw error;
-  }
-
-  /* Добавление элемента activity происходит в 4 этапа
-		1) Создание в таблице activity элемента со значениями default:
-			task_id = null, name = '', note = '', part = 0, status = 0, owner = mainUser_id,
-			productive = false, start = null, ends = null
-		2) Добавление id созданного элемента в таблицу activity_list со значениями default:
-			group_id = group_id, user_id = mainUser_id, type_el = type_el
-		3) Если присутствует параметр start, то обновляется это значение в таблице activity
-		4) Если присутствует параметр task_id, то обновляется это значение в таблице activity,
-			значение activity.name обновляется на task.name	значение productuve обновляется на true
-		5) Если присутствует status отличный от 0, тогда обновляется значение предыдущего
-		элемента со статусами "Начато" или "Продолжено", назначается "ends" создается новая
-		активность со статусом "Приостановлено" и назначением "start".
-	*/
-
-  const client = await pg.pool.connect();
-
-  try {
-    // Начало транзакции
-    await client.query('BEGIN');
-
-    if (task_id) {
-      // Проверка, есть ли права на task_id для текущего пользователя
-      queryText = `SELECT tl.task_id FROM groups_list AS gl
-				LEFT JOIN groups AS grp ON gl.group_id = grp.id
-				RIGHT JOIN tasks_list AS tl ON (gl.group_id = tl.group_id) AND (tl.task_id = $2)
-				WHERE (grp.reading >= gl.user_type)
-					AND (grp.el_reading >= gl.user_type)
-					AND (gl.user_id = 0 OR gl.user_id = $1)`;
-      params = [conditions.mainUser_id, task_id];
-      const { rowCount } = await client.query(queryText, params);
-
-      // Если прав нет, то запрос вернет пустой результат и транзакция откатится
-      if (rowCount === 0) {
-        await client.query('ROLLBACK');
-
-        throw new VError(
-          {
-            info: { status: 400 /* Bad request */ },
-          },
-          'PermissionDenied',
-        );
-      }
-    }
-
-    /* Обработка ситуации, когда меняется статус у задачи */
-    if (status) {
-      // Поиск активности со статусами "Started-1" или "Continued-5". Т.к. сперва
-      // необходимо приостановить активности с действующим статусом у той задачи,
-      // которая в данный момент выполняется и не равна задаче переданной пользователем
-      queryText = `SELECT al.id, al.group_id, act.task_id
-      	FROM activity_list AS al
-      	RIGHT JOIN activity AS act ON al.id = act.id
-      	WHERE (al.user_id = $1)
-      		AND (act.task_id <> $2)
-      		AND (act.ends is null)
-      		AND (act.status = 1 OR act.status = 5);`;
-      const { rows: existsElements } = await client.query(queryText, params);
-      // Если есть такие активности, то запрос вернёт массив с результатом
-      if (existsElements && existsElements.length) {
-        // Закрытие статуса у действующей активности
-        queryText = 'UPDATE activity SET ends = $1 WHERE id = $2;';
-        params = [start, existsElements[0].id];
-        await client.query(queryText, params);
-        // Создание активности с новым статусом "Suspended-3" для действующей задачи
-        queryText = `SELECT add_activity($1, $2, $3, $4);`;
-        params = [
-          conditions.mainUser_id,
-          existsElements[0].group_id,
-          conditions.type_el,
-          isStart,
-        ];
-        const { rows } = await client.query(queryText, params);
-        // Обновление атрибутов задачи
-        queryText = `UPDATE activity
-      		SET (start, task_id, status, productive, part) =
-      			($1, $2, $3, $4, (SELECT count(id) FROM activity WHERE task_id = $2))
-      		WHERE id = $5;`;
-        params = [
-          start,
-          existsElements[0].task_id,
-          3,
-          true,
-          rows[0].add_activity,
-        ];
-        await client.query(queryText, params);
-        returnElements.push(existsElements[0].task_id);
-      }
-    }
-
-    // Поиск активности у той задачи, которая в данный момент принадлежит
-    // переданной пользователем задаче и имеет атрибут "ends" == null
-    queryText = `SELECT al.id, al.group_id
-			FROM activity_list AS al
-			RIGHT JOIN activity AS act ON al.id = act.id
-			WHERE (al.user_id = $1)
-				AND (act.task_id = $2)
-				AND (act.ends is null);`;
-    params = [conditions.mainUser_id, task_id];
-    const { rows } = await client.query(queryText, params);
-
-    // Если есть такая активность, то запрос вернёт массив с результатом
-    if (rows && rows.length) {
-      // Обновление значения активности на переданное от пользователя
-      queryText = 'UPDATE activity SET ends = $1 WHERE id = $2;';
-      params = [start, rows[0].id];
-      await client.query(queryText, params);
-    }
-
-    // Создание в таблице activity элемента и добавление в activity_list
-    queryText = `SELECT add_activity($1, $2, $3, $4);`;
-    params = [
-      conditions.mainUser_id,
-      conditions.group_id,
-      conditions.type_el,
-      isStart,
-    ];
-    const { rows: newElements } = await client.query(queryText, params);
-
-    const elementId = newElements[0].add_activity;
-
-    returnElements.push(task_id);
-
-    if (start) {
-      // Обновление значения start в таблице activity
-      queryText = 'UPDATE activity SET start = $1 WHERE id = $2;';
-      params = [start, elementId];
-      await client.query(queryText, params);
-    }
-
-    // Обновление значения task_id в таблице activity
-    if (task_id) {
-      // Если есть права на задачу, то она слинкуется с элементом активности
-      if (status) {
-        queryText = `UPDATE activity
-					SET (task_id, productive, status, start, part)
-						= ($1, $2, $3, $4, (SELECT count(id) FROM activity WHERE task_id = $1))
-					WHERE id = $5;`;
-        params = [task_id, true, status, start, elementId];
-      } else {
-        queryText =
-          'UPDATE activity SET (task_id, productive) = ($1, $2) WHERE id = $3;';
-        params = [task_id, true, elementId];
-      }
-      await client.query(queryText, params);
-    }
-
-    // Фиксация транзакции
-    await client.query('commit');
-
-    // Получение данных по добавленному элементу
-    if (task_id) {
-      // Получение всех активностей по task_id
-      queryText = `SELECT al.id, al.group_id, al.user_id, al.type_el,
-				act.task_id, act.name, act.note, act.productive, act.part,
-				act.status, act.owner, act.start, act.ends, uf.url as avatar
-			FROM activity_list AS al
-			LEFT JOIN activity AS act ON al.id = act.id
-			LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
-			WHERE act.task_id IN (SELECT * FROM UNNEST($1::varchar[]))
-      ORDER BY act.start DESC;`;
-      // WHERE act.task_id IN (SELECT * FROM UNNEST ($1::integer[]))
-      // ORDER BY act.task_id, (al.p::float8/al.q);`
-      params = [returnElements];
-    } else {
-      // Получение одной активности по activity id
-      queryText = `SELECT al.id, al.group_id, al.user_id, al.type_el,
-				act.task_id, act.name, act.note, act.productive, act.part,
-				act.status, act.owner, act.start, act.ends, uf.url as avatar
-			FROM activity_list AS al
-			LEFT JOIN activity AS act ON al.id = act.id
-			LEFT JOIN users_photo AS uf ON (al.user_id = uf.user_id) AND (uf.isavatar = true)
-			WHERE al.id = $1;`;
-      params = [elementId];
-    }
-    const { rows: elements } = await client.query(queryText, params);
-
-    return Promise.resolve(elements);
-  } catch (error) {
-    await client.query('ROLLBACK');
-
-    throw new VError(
-      {
-        cause: error,
-        info: { status: 400 },
-      },
-      'DatabaseError',
-    );
-  } finally {
-    client.release();
-  }
-}

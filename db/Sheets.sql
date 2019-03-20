@@ -35,8 +35,15 @@ CREATE TRIGGER trigger_sheets_genid BEFORE INSERT ON sheets FOR EACH ROW EXECUTE
 CREATE TABLE IF NOT EXISTS sheets_conditions (
 	sheet_id	char(8) REFERENCES sheets ON DELETE cascade,
 	condition smallint,
-	value 		varchar(10),
+	value 		text,
 	PRIMARY KEY (sheet_id, condition)
+)
+
+CREATE TABLE IF NOT EXISTS sheets_visions (
+	sheet_id	char(8) REFERENCES sheets ON DELETE cascade,
+	vision smallint,
+	value text,
+	PRIMARY KEY (sheet_id, vision)
 )
 
 INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout)

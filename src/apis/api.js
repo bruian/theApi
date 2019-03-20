@@ -7,6 +7,7 @@ const ContextController = require('../controllers/contexts');
 const TaskController = require('../controllers/tasks');
 const ActivityController = require('../controllers/activity');
 const SheetController = require('../controllers/sheets');
+const LayoutController = require('../controllers/layouts');
 const { logger: log } = require('../log');
 
 const router = new Router();
@@ -524,12 +525,16 @@ router.get('/activity', jwtMiddleware(), async ctx => {
 
   try {
     const activity_data = await ActivityController.getActivity(condition);
+    // if (activity_data.length > 0) {
     const restrictions_data = await ActivityController.getRestrictions(
       condition,
     );
     logRequest(timeStart, ctx, condition, activity_data);
-
     ctx.body = { activity_data, restrictions_data };
+    // } else {
+    //   logRequest(timeStart, ctx, condition, activity_data);
+    //   ctx.body = { activity_data };
+    // }
   } catch (error) {
     log.warn(
       `/activity get |-> status:${error.jse_info.status} | message:${
@@ -672,13 +677,13 @@ router.put('/activity/order', jwtMiddleware(), async ctx => {
   condition.type = 'last_element';
 
   try {
-    const activity_data = await ActivityController.updatePosition(condition);
+    const data = await ActivityController.updatePosition(condition);
     const restrictions_data = await ActivityController.getRestrictions(
       condition,
     );
-    logRequest(timeStart, ctx, condition, activity_data);
+    logRequest(timeStart, ctx, condition, data);
 
-    ctx.body = { activity_data, restrictions_data };
+    ctx.body = { ...data, restrictions_data };
   } catch (error) {
     log.warn(
       `/activity/order put |-> status:${error.jse_info.status} | message:${
@@ -792,6 +797,116 @@ router.del('/sheets', jwtMiddleware(), async ctx => {
   } catch (error) {
     log.warn(
       `/sheets delete |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/* -----------------------------------------LAYOUTS API----------------------------------------- */
+
+/**
+ * @func router.get('/layouts')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "getLayouts" and responce data: JSON
+ */
+router.get('/layouts', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+
+  try {
+    const data = await LayoutController.getLayouts(condition);
+    logRequest(timeStart, ctx, condition, data);
+    ctx.body = { data, packet: condition.packet };
+  } catch (error) {
+    log.warn(
+      `/layouts get |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/**
+ * @func router.post('/layouts')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "createLayout" and responce data: JSON
+ */
+router.post('/layouts', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+
+  try {
+    const data = await LayoutController.createLayout(condition);
+    logRequest(timeStart, ctx, condition, data);
+    ctx.body = { data };
+  } catch (error) {
+    log.warn(
+      `/layouts post |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/**
+ * @func router.put('/layouts')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "updateLayout" and responce data: JSON
+ */
+router.put('/layouts', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+
+  try {
+    const data = await LayoutController.updateLayout(condition);
+    logRequest(timeStart, ctx, condition, data);
+    ctx.body = { data };
+  } catch (error) {
+    log.warn(
+      `/layouts put |-> status:${error.jse_info.status} | message:${
+        error.message
+      }`,
+    );
+
+    ctx.status = error.jse_info.status;
+    ctx.body = { message: error.message };
+  }
+});
+
+/**
+ * @func router.delete('/layouts')
+ * @param {String} path - http path from METHOD
+ * @param {function(...args): Callback} response - to client
+ * @returns { Response: Object }
+ * @description Http METHOD. Call api function "deleteLayout" and responce data: JSON
+ */
+router.del('/layouts', jwtMiddleware(), async ctx => {
+  const timeStart = Date.now();
+  const condition = getCondition(ctx);
+
+  try {
+    const data = await LayoutController.deleteLayout(condition);
+    logRequest(timeStart, ctx, condition, data);
+    ctx.body = { data };
+  } catch (error) {
+    log.warn(
+      `/layouts delete |-> status:${error.jse_info.status} | message:${
         error.message
       }`,
     );

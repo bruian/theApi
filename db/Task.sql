@@ -9,6 +9,7 @@ CREATE TABLE tasks (
 	level		smallint NOT NULL DEFAULT 1,
 	depth 	smallint NOT NULL DEFAULT 1,
 	singular boolean NOT NULL DEFAULT false,
+	productive boolean NOT NULL DEFAULT true,
 	CONSTRAINT tsk_id UNIQUE(id)
 );
 
