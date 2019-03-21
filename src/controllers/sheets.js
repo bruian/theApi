@@ -156,7 +156,11 @@ async function updateSheet(conditions) {
               break;
           }
 
-          conditionsParams.push(conditions[prop][key]);
+          if (conditions[prop][key] === '') {
+            conditionsParams.push(null);
+          } else {
+            conditionsParams.push(JSON.stringify(conditions[prop][key]));
+          }
         });
 
         cond = cond.substring(0, cond.length - 1);

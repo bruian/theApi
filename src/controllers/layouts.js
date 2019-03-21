@@ -1,5 +1,5 @@
 const VError = require('verror');
-const { conditionMustBeSet } = require('../utils');
+const { conditionMustBeSet, conditionMustSet } = require('../utils');
 const pg = require('../db/postgres');
 
 /* mainUser_id - идентификатор пользователя, который аутентифицирован в системе	относительно
@@ -38,7 +38,7 @@ async function getLayouts(conditions) {
 
   /* $1 = mainUser_id */
   const queryText = `
-	SELECT id, type_el,	sheet_id,	layout
+	SELECT id, type_el,	sheet_id,	position, type_layout, element_id
 	FROM layouts WHERE user_id = $1;`;
 
   const client = await pg.pool.connect();
@@ -47,8 +47,8 @@ async function getLayouts(conditions) {
     const { rows: data } = await client.query(queryText, params);
 
     return Promise.resolve({
-      generalSheet: data.filter(el => el.layout === 1),
-      additionalSheet: data.filter(el => el.layout === 2),
+      generalLayouts: data.filter(el => el.position === 1),
+      additionalLayouts: data.filter(el => el.position === 2),
     });
   } catch (error) {
     throw new VError(
@@ -73,7 +73,7 @@ async function getLayouts(conditions) {
  */
 async function updateLayout(conditions) {
   let attributes = '';
-  let returning = ' RETURNING id, layout';
+  let returning = ' RETURNING id, position';
 
   const params = [];
 
@@ -101,9 +101,17 @@ async function updateLayout(conditions) {
         returning = `${returning}, sheet_id`;
         params.push(conditions[prop]);
         break;
-      case 'layout':
-        attributes = `${attributes} layout = \$${params.length + 1},`;
+      case 'position':
+        attributes = `${attributes} position = \$${params.length + 1},`;
         params.push(Number(conditions[prop]));
+        break;
+      case 'type_layout':
+        attributes = `${attributes} type_layout = \$${params.length + 1},`;
+        params.push(Number(conditions[prop]));
+        break;
+      case 'element_id':
+        attributes = `${attributes} element_id = \$${params.length + 1},`;
+        params.push(conditions[prop]);
         break;
       default:
         break;
@@ -138,8 +146,8 @@ async function updateLayout(conditions) {
     await client.query('COMMIT');
 
     return Promise.resolve({
-      generalSheet: data.filter(el => el.layout === 1),
-      additionalSheet: data.filter(el => el.layout === 2),
+      generalLayouts: data.filter(el => el.position === 1),
+      additionalLayouts: data.filter(el => el.position === 2),
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -161,32 +169,44 @@ async function updateLayout(conditions) {
  * @param {Object} conditions
  * @returns { function(...args): Promise }
  * @description Create new <layout> in database
- * conditions object = { mainUser_id: Number, id: Number, layout: Number,
+ * conditions object = { mainUser_id: Number, id: Number, position: Number,
  * 	type_el: Number, sheet_id: char(8) }
  */
 async function createLayout(conditions) {
   let params = [];
+  let element_id = '';
+  let sheet_id = '';
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'id');
-    conditionMustBeSet(conditions, 'layout');
+    conditionMustBeSet(conditions, 'position');
     conditionMustBeSet(conditions, 'type_el');
-    conditionMustBeSet(conditions, 'sheet_id');
+    conditionMustBeSet(conditions, 'type_layout');
+
+    if (conditionMustSet(conditions, 'element_id')) {
+      element_id = conditions.element_id; // eslint-disable-line
+    }
+
+    if (conditionMustSet(conditions, 'sheet_id')) {
+      sheet_id = conditions.sheet_id; // eslint-disable-line
+    }
 
     params = [
       conditions.mainUser_id,
       conditions.id,
-      conditions.layout,
+      conditions.position,
       conditions.type_el,
-      conditions.sheet_id,
+      sheet_id,
+      conditions.type_layout,
+      element_id,
     ];
   } catch (error) {
     throw error;
   }
 
-  const queryText = `INSERT INTO layouts (user_id, id, layout, type_el, sheet_id) 
-  VALUES ($1, $2, $3, $4, $5)	RETURNING id, layout, type_el, sheet_id;`;
+  const queryText = `INSERT INTO layouts (user_id, id, position, type_el, sheet_id, type_layout, element_id) 
+  VALUES ($1, $2, $3, $4, $5, $6, $7)	RETURNING id, position, type_el, sheet_id, type_layout, element_id;`;
 
   const client = await pg.pool.connect();
 
@@ -196,8 +216,8 @@ async function createLayout(conditions) {
     await client.query('COMMIT');
 
     return Promise.resolve({
-      generalSheet: data.filter(el => el.layout === 1),
-      additionalSheet: data.filter(el => el.layout === 2),
+      generalLayouts: data.filter(el => el.position === 1),
+      additionalLayouts: data.filter(el => el.position === 2),
     });
   } catch (error) {
     await client.query('ROLLBACK');

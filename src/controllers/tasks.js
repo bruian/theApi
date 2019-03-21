@@ -80,24 +80,30 @@ async function getTasks(conditions) {
     conditionMustBeSet(conditions, 'mainUser_id');
     params.push(conditions.mainUser_id);
 
-    if (conditionMustSet(conditions, 'parent_id')) {
+    if (
+      conditionMustSet(conditions, 'parent_id') &&
+      conditions.parent_id.length
+    ) {
       pgParentCondition = ` AND t.parent = \$${params.length + 1}`;
       params.push(conditions.parent_id);
       selectTask = true;
     }
 
-    if (conditionMustSet(conditions, 'id')) {
+    if (conditionMustSet(conditions, 'id') && conditions.id.length) {
       pgTaskCondition = ` AND t.id = \$${params.length + 1}`;
       params.push(conditions.task_id);
       selectTask = true;
     }
 
-    if (conditionMustSet(conditions, 'group_id')) {
+    if (
+      conditionMustSet(conditions, 'group_id') &&
+      conditions.group_id.length
+    ) {
       pgGroupCondition = ` AND tl.group_id = \$${params.length + 1}`;
       params.push(conditions.group_id);
     }
 
-    if (conditionMustSet(conditions, 'userId')) {
+    if (conditionMustSet(conditions, 'userId') && conditions.userId.length) {
       pgUserGroups = `, user_groups AS (
 				SELECT gl.group_id FROM groups_list AS gl
 					WHERE (gl.group_id IN (SELECT * FROM main_visible_groups))
@@ -107,7 +113,7 @@ async function getTasks(conditions) {
       params.push(conditions.userId);
     }
 
-    if (conditionMustSet(conditions, 'like')) {
+    if (conditionMustSet(conditions, 'like') && conditions.like.length) {
       pgSearchText = ` AND t.name ILIKE '%\$${params.length + 1}%'`;
       params.push(conditions.like);
     }

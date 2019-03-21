@@ -7,12 +7,18 @@
 		16 - users			0010000
 		32 - post-notes	0100000
 		64 - images			1000000
+	type_layout: 
+		1 - manage-sheet,
+		2 - property-sheet
+		3 - list-sheet
 */
 CREATE TABLE IF NOT EXISTS layouts (
 	id 				numeric,
 	user_id		char(8),
-	sheet_id	varchar(20),
+	sheet_id	char(8),
+	element_id char(8),
+	type_layout integer,
 	type_el		integer,
-	layout		smallint,
+	position	smallint,
 	PRIMARY KEY (id, user_id)
 );

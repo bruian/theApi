@@ -63,7 +63,10 @@ async function getGroups(conditions) {
     conditionMustBeSet(conditions, 'mainUser_id');
     params.push(conditions.mainUser_id);
 
-    if (conditionMustSet(conditions, 'parent_id')) {
+    if (
+      conditionMustSet(conditions, 'parent_id') &&
+      conditions.parent_id.length
+    ) {
       pgParentCondition = ` AND g.parent = \$${params.length + 1}`;
       params.push(conditions.parent_id);
       selectGroup = true;
@@ -73,9 +76,20 @@ async function getGroups(conditions) {
       pgGroupCondition = ` AND g.id = \$${params.length + 1}`;
       params.push(conditions.id);
       selectGroup = true;
+    } else if (
+      conditionMustSet(conditions, 'group_id') &&
+      conditions.group_id.length
+    ) {
+      pgGroupCondition = ` AND g.id IN (SELECT * FROM UNNEST(\$${params.length +
+        1}::varchar[]))`;
+      if (Array.isArray(conditions.group_id)) {
+        params.push(conditions.group_id);
+      } else {
+        params.push([conditions.group_id]);
+      }
     }
 
-    if (conditionMustSet(conditions, 'userId')) {
+    if (conditionMustSet(conditions, 'userId') && conditions.userId.length) {
       if (conditions.userId === 'main') {
         mainGroups = true;
       } else {
@@ -89,7 +103,7 @@ async function getGroups(conditions) {
       }
     }
 
-    if (conditionMustSet(conditions, 'like')) {
+    if (conditionMustSet(conditions, 'like') && conditions.like.length) {
       pgSearchText = ` AND g.name ILIKE '%\$${params.length + 1}%'`;
       params.push(conditions.like);
     }
