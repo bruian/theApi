@@ -259,7 +259,7 @@ async function createActivity(conditions) {
       task_id = conditions.task_id; // eslint-disable-line
     }
 
-    if (conditionMustSet(conditions, 'status') && conditions.status.length) {
+    if (conditionMustSet(conditions, 'status')) {
       status = Number(conditions.status); // eslint-disable-line
     }
 
