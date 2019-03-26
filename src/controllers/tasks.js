@@ -99,8 +99,16 @@ async function getTasks(conditions) {
       conditionMustSet(conditions, 'group_id') &&
       conditions.group_id.length
     ) {
-      pgGroupCondition = ` AND tl.group_id = \$${params.length + 1}`;
-      params.push(conditions.group_id);
+      // pgGroupCondition = ` AND tl.group_id = \$${params.length + 1}`;
+      // params.push(conditions.group_id);
+
+      pgGroupCondition = ` AND tl.group_id IN (SELECT * FROM UNNEST(\$${params.length +
+        1}::varchar[]))`;
+      if (Array.isArray(conditions.group_id)) {
+        params.push(conditions.group_id);
+      } else {
+        params.push([conditions.group_id]);
+      }
     }
 
     if (conditionMustSet(conditions, 'userId') && conditions.userId.length) {
@@ -220,7 +228,7 @@ async function createTask(conditions) {
     conditionMustBeSet(conditions, 'parent_id');
     conditionMustBeSet(conditions, 'group_id');
 
-    if (conditionMustSet(conditions, 'isStart')) {
+    if (conditionMustSet(conditions, 'isStart') && conditions.isStart.length) {
       isStart =
         typeof conditions.isStart === 'boolean'
           ? conditions.isStart
@@ -474,7 +482,10 @@ async function updatePosition(conditions) {
       position = conditions.position; // eslint-disable-line
     }
 
-    if (conditionMustSet(conditions, 'parent_id')) {
+    if (
+      conditionMustSet(conditions, 'parent_id') &&
+      conditions.parent_id.length
+    ) {
       if (
         typeof conditions.parent_id === 'string' &&
         (conditions.parent_id === '0' || conditions.parent_id.length === 8)
@@ -495,14 +506,20 @@ async function updatePosition(conditions) {
       }
     }
 
-    if (conditionMustSet(conditions, 'isBefore')) {
+    if (
+      conditionMustSet(conditions, 'isBefore') &&
+      conditions.isBefore.length
+    ) {
       isBefore =
         typeof conditions.isBefore === 'boolean'
           ? conditions.isBefore
           : conditions.isBefore === 'true';
     }
 
-    if (conditionMustSet(conditions, 'next_tail')) {
+    if (
+      conditionMustSet(conditions, 'next_tail') &&
+      conditions.next_tail.length
+    ) {
       nextTail = conditions.next_tail; // eslint-disable-line
     }
   } catch (error) {

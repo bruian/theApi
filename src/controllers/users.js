@@ -68,23 +68,33 @@ async function getOrCreateUser(conditions) {
 
     /* Create default sheet: My groups */
     params = [conditions.mainUser_id];
-    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
-    VALUES (8, $1, $1, 'My groups', true, 1);`;
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, defaults) 
+    VALUES (8, $1, $1, 'All my groups', true);`;
     await client.query(queryText, params);
 
     /* Create default sheet: My tasks */
-    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
-    VALUES (4, $1, $1, 'My tasks', true, 2);`;
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, defaults) 
+    VALUES (4, $1, $1, 'All my tasks', true);`;
     await client.query(queryText, params);
 
     /* Create default sheet: My activity */
-    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
-    VALUES (2, $1, $1, 'My activity', false, 2);`;
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, defaults) 
+    VALUES (2, $1, $1, 'All my activity', true);`;
     await client.query(queryText, params);
 
     /* Create default sheet: My users */
-    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout) 
-    VALUES (16, $1, $1, 'My users', false, 2);`;
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, defaults) 
+    VALUES (16, $1, $1, 'All my contacts', true);`;
+    await client.query(queryText, params);
+
+    /* Create default service sheet: tasks */
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, service, defaults) 
+    VALUES (4, $1, $1, 'Tasks', true, true);`;
+    await client.query(queryText, params);
+
+    /* Create default service sheet: tasks */
+    queryText = `INSERT INTO sheets (type_el, user_id, owner_id, name, service, defaults) 
+    VALUES (2, $1, $1, 'Activity', true, true);`;
     await client.query(queryText, params);
 
     /* Create default sheet: All groups */

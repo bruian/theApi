@@ -115,27 +115,38 @@ async function getActivity(conditions) {
       params.push(offset);
     }
 
-    if (conditionMustSet(conditions, 'type_el')) {
+    if (conditionMustSet(conditions, 'type_el') && conditions.type_el.length) {
       pgTypeCondition = ` AND (al.type_el & \$${params.length + 1} > 0)`;
       params.push(Number(conditions.type_el));
     }
 
-    if (conditionMustSet(conditions, 'group_id')) {
+    if (
+      conditionMustSet(conditions, 'group_id') &&
+      conditions.group_id.length
+    ) {
       pgGroupCondition = ` AND al.group_id = \$${params.length + 1}`;
       params.push(conditions.group_id);
     }
 
-    if (conditionMustSet(conditions, 'id')) {
+    if (conditionMustSet(conditions, 'id') && conditions.id.length) {
       pgIdCondition = ` AND al.id = \$${params.length + 1}`;
       params.push(conditions.id);
     }
 
-    if (conditionMustSet(conditions, 'task_id')) {
-      pgTaskCondition = ` AND act.task_id = \$${params.length + 1}`;
-      params.push(conditions.task_id);
+    if (conditionMustSet(conditions, 'task_id') && conditions.task_id.length) {
+      // pgTaskCondition = ` AND act.task_id = \$${params.length + 1}`;
+      // params.push(conditions.task_id);
+
+      pgTaskCondition = ` AND act.task_id IN (SELECT * FROM UNNEST(\$${params.length +
+        1}::varchar[]))`;
+      if (Array.isArray(conditions.task_id)) {
+        params.push(conditions.task_id);
+      } else {
+        params.push([conditions.task_id]);
+      }
     }
 
-    if (conditionMustSet(conditions, 'userId')) {
+    if (conditionMustSet(conditions, 'userId') && conditions.userId.length) {
       pgUserGroups = `, user_groups AS (
         SELECT gl.group_id FROM groups_list AS gl
           WHERE gl.group_id IN (SELECT * FROM main_visible_groups) AND gl.user_id = \$${params.length +
@@ -146,7 +157,7 @@ async function getActivity(conditions) {
       params.push(conditions.user_id);
     }
 
-    if (conditionMustSet(conditions, 'like')) {
+    if (conditionMustSet(conditions, 'like') && conditions.like.length) {
       pgSearchText = ` AND act.name ILIKE '%\$${params.length + 1}%'`;
       params.push(conditions.like);
     }
@@ -248,11 +259,14 @@ async function createActivity(conditions) {
       task_id = conditions.task_id; // eslint-disable-line
     }
 
-    if (conditionMustSet(conditions, 'status')) {
+    if (conditionMustSet(conditions, 'status') && conditions.status.length) {
       status = Number(conditions.status); // eslint-disable-line
     }
 
-    if (conditionMustSet(conditions, 'next_tail')) {
+    if (
+      conditionMustSet(conditions, 'next_tail') &&
+      conditions.next_tail.length
+    ) {
       nextTail = conditions.next_tail; // eslint-disable-line
     }
   } catch (error) {
@@ -456,7 +470,7 @@ async function deleteActivity(conditions) {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'id');
 
-    if (conditionMustSet(conditions, 'checkOne')) {
+    if (conditionMustSet(conditions, 'checkOne') && conditions.checkOne) {
       checkOne = conditions.checkOne; // eslint-disable-line
     }
   } catch (error) {

@@ -14,8 +14,7 @@ CREATE TABLE IF NOT EXISTS sheets (
 	user_id			integer,
 	owner_id		integer,
 	name				varchar(300),
-	visible			boolean DEFAULT true,
-	layout			smallint,
+	service			boolean DEFAULT false,
 	defaults		boolean DEFAULT false
 	CONSTRAINT sheets_pkey UNIQUE(id)
 );
@@ -46,8 +45,8 @@ CREATE TABLE IF NOT EXISTS sheets_visions (
 	PRIMARY KEY (sheet_id, vision)
 )
 
-INSERT INTO sheets (type_el, user_id, owner_id, name, visible, layout)
-	VALUES (4, 1, 1, 'My personal tasks', true, 2)
+INSERT INTO sheets (type_el, user_id, owner_id, name)
+	VALUES (4, 1, 1, 'My personal tasks')
 	RETURNING *;
 
 INSERT INTO sheets_conditions (sheet_id, condition, value)

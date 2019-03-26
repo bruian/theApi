@@ -72,7 +72,7 @@ async function getGroups(conditions) {
       selectGroup = true;
     }
 
-    if (conditionMustSet(conditions, 'id')) {
+    if (conditionMustSet(conditions, 'id') && conditions.id.length) {
       pgGroupCondition = ` AND g.id = \$${params.length + 1}`;
       params.push(conditions.id);
       selectGroup = true;
@@ -109,11 +109,11 @@ async function getGroups(conditions) {
     }
 
     if (!selectGroup) {
-      if (conditionMustSet(conditions, 'limit')) {
+      if (conditionMustSet(conditions, 'limit') && conditions.limit.length) {
         limit = Number(conditions.limit);
       }
 
-      if (conditionMustSet(conditions, 'offset')) {
+      if (conditionMustSet(conditions, 'offset') && conditions.offset.length) {
         offset = Number(conditions.offset);
       }
 
@@ -221,7 +221,7 @@ async function createGroup(conditions) {
     conditionMustBeSet(conditions, 'mainUser_id');
     conditionMustBeSet(conditions, 'parent_id');
 
-    if (conditionMustSet(conditions, 'isStart')) {
+    if (conditionMustSet(conditions, 'isStart') && conditions.isStart.length) {
       isStart =
         typeof conditions.isStart === 'boolean'
           ? conditions.isStart
@@ -449,7 +449,10 @@ async function updatePosition(conditions) {
       }
     }
 
-    if (conditionMustSet(conditions, 'isBefore')) {
+    if (
+      conditionMustSet(conditions, 'isBefore') &&
+      conditions.isBefore.length
+    ) {
       isBefore =
         typeof conditions.isBefore === 'boolean'
           ? conditions.isBefore

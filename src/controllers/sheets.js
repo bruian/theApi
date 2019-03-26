@@ -15,10 +15,8 @@ const pg = require('../db/postgres');
 /* name - название списка
 	- ожидается string */
 
-/* layout - идентификатор раскладки в котором находится список
-	- ожидается number */
-
-/* visible - идентификатор видимости списка
+/* service - не видимый пользователем sheet, используется для отображения служебной или временной 
+  информации. К примеру показ sheet по элементу, который выбрал пользователь в связном sheet
 	- ожидается boolean */
 
 /**
@@ -94,12 +92,12 @@ async function getSheets(conditions) {
 async function updateSheet(conditions) {
   let attributes = '';
   let returning = ' RETURNING id';
-  let cond = '';
   let visi = '';
 
-  const conditionsParams = [];
   const visionsParams = [];
   const params = [];
+
+  let haveCondition = false;
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
@@ -121,49 +119,8 @@ async function updateSheet(conditions) {
         returning = `${returning}, name`;
         params.push(conditions[prop]);
         break;
-      case 'visible':
-        // eslint-disable-next-line
-        attributes = `${attributes} visible = \$${params.length + 1},`;
-        returning = `${returning}, visible`;
-        params.push(conditions[prop] === 'true');
-        break;
-      case 'layout':
-        // eslint-disable-next-line
-        attributes = `${attributes} layout = \$${params.length + 1},`;
-        returning = `${returning}, layout`;
-        params.push(Number(conditions[prop]));
-        break;
       case 'condition':
-        // Первый элемент по индексу в параметрах состояний, будет id sheet, который меняется
-        conditionsParams.push(conditions.id);
-
-        /* Обработка условий для отображения sheet элементов */
-        Object.keys(conditions[prop]).forEach(key => {
-          switch (key) {
-            case 'group_id':
-              cond = `${cond} ($1, 1, \$${conditionsParams.length + 1}),`;
-              break;
-            case 'user_id':
-              cond = `${cond} ($1, 2, \$${conditionsParams.length + 1}),`;
-              break;
-            case 'parent_id':
-              cond = `${cond} ($1, 3, \$${conditionsParams.length + 1}),`;
-              break;
-            case 'task_id':
-              cond = `${cond} ($1, 4, \$${conditionsParams.length + 1}),`;
-              break;
-            default:
-              break;
-          }
-
-          if (conditions[prop][key] === '') {
-            conditionsParams.push(null);
-          } else {
-            conditionsParams.push(JSON.stringify(conditions[prop][key]));
-          }
-        });
-
-        cond = cond.substring(0, cond.length - 1);
+        haveCondition = true;
         break;
       case 'vision':
         visionsParams.push(conditions.id);
@@ -190,7 +147,7 @@ async function updateSheet(conditions) {
   /* Если ничего не передано для изменения, то нет смысла делать запрос к базе */
   if (
     attributes.length === 0 &&
-    conditionsParams.length === 0 &&
+    haveCondition === false &&
     visionsParams.length === 0
   ) {
     throw new VError(
@@ -210,11 +167,6 @@ async function updateSheet(conditions) {
   const queryText = `
 		UPDATE sheets SET ${attributes} WHERE (user_id = $1) AND (id = $2)
 		${returning};`;
-
-  const querySheetsConditions = `
-		INSERT INTO sheets_conditions (sheet_id, condition, value) VALUES ${cond}
-		ON CONFLICT (sheet_id, condition) DO UPDATE SET value = EXCLUDED.value
-		RETURNING condition, value;`;
 
   const querySheetsVisions = `
     INSERT INTO sheets_visions (sheet_id, vision, value) VALUES ${visi}
@@ -236,12 +188,57 @@ async function updateSheet(conditions) {
       elements = Object.assign(elements, result.rows[0]);
     }
 
-    if (conditionsParams.length > 0) {
-      result = await client.query(querySheetsConditions, conditionsParams);
+    if (conditionMustSet(conditions, 'condition')) {
       elements = Object.assign(elements, {
-        conditions: [result.rows[0].condition],
-        conditionvalues: [result.rows[0].value],
+        conditions: [],
+        conditionvalues: [],
       });
+
+      for (let i = 0; i < conditions.condition.length; i++) {
+        // Первый элемент по индексу в параметрах состояний, будет id sheet, который меняется
+        const conditionsParams = [conditions.id];
+        let cond = '';
+
+        /* Обработка условий для отображения sheet элементов */
+        /* eslint-disable no-loop-func */
+        Object.keys(conditions.condition[i]).forEach(key => {
+          switch (key) {
+            case 'group_id':
+              cond = `${cond} ($1, 1, \$${conditionsParams.length + 1}),`;
+              break;
+            case 'userId':
+              cond = `${cond} ($1, 2, \$${conditionsParams.length + 1}),`;
+              break;
+            case 'parent_id':
+              cond = `${cond} ($1, 3, \$${conditionsParams.length + 1}),`;
+              break;
+            case 'task_id':
+              cond = `${cond} ($1, 4, \$${conditionsParams.length + 1}),`;
+              break;
+            default:
+              break;
+          }
+
+          if (conditions.condition[i][key] === '') {
+            conditionsParams.push(null);
+          } else {
+            conditionsParams.push(JSON.stringify(conditions.condition[i][key]));
+          }
+        });
+        /* eslint-enable no-loop-func */
+
+        cond = cond.substring(0, cond.length - 1);
+
+        const querySheetsConditions = `
+          INSERT INTO sheets_conditions (sheet_id, condition, value) VALUES ${cond}
+          ON CONFLICT (sheet_id, condition) DO UPDATE SET value = EXCLUDED.value
+          RETURNING condition, value;`;
+
+        // eslint-disable-next-line
+        result = await client.query(querySheetsConditions, conditionsParams);
+        elements.conditions.push(result.rows[0].condition);
+        elements.conditionvalues.push(result.rows[0].value);
+      }
     }
 
     if (visionsParams.length > 0) {
@@ -275,8 +272,7 @@ async function updateSheet(conditions) {
  * @param {Object} conditions
  * @returns { function(...args): Promise }
  * @description Create new <Sheet> in database
- * conditions object = { mainUser_id: Number, type_el: Number, layout: Number,
- * 	name: String, visible: boolean }
+ * conditions object = { mainUser_id: Number, type_el: Number, name: String }
  */
 async function createSheet(conditions) {
   let queryValues = '';
@@ -301,18 +297,6 @@ async function createSheet(conditions) {
     queryFields = `${queryFields}, name`;
     queryValues = `${queryValues}, \$${params.length + 1}`;
     params.push(conditions.name);
-
-    if (conditionMustSet(conditions, 'layout')) {
-      queryFields = `${queryFields}, layout`;
-      queryValues = `${queryValues}, \$${params.length + 1}`;
-      params.push(Number(conditions.layout));
-    }
-
-    if (conditionMustSet(conditions, 'visible')) {
-      queryFields = `${queryFields}, visible`;
-      queryValues = `${queryValues}, \$${params.length + 1}`;
-      params.push(conditions.visible === 'true');
-    }
   } catch (error) {
     throw error;
   }
@@ -378,11 +362,8 @@ async function deleteSheet(conditions) {
 
   try {
     await client.query('BEGIN');
-
-    const queryText = `DELETE FROM sheets WHERE (owner_id = $1) AND (id = $2);`;
-
+    const queryText = `DELETE FROM sheets WHERE (owner_id = $1) AND (id = $2) AND (service = false) AND (defaults = false);`;
     const params = [conditions.mainUser_id, conditions.id];
-
     await client.query(queryText, params);
 
     await client.query('COMMIT');
