@@ -1,5 +1,5 @@
 const VError = require('verror');
-const { conditionMustBeSet, conditionMustSet } = require('../utils');
+const { conditionMustBeSet } = require('../utils');
 const pg = require('../db/postgres');
 
 /* mainUser_id - идентификатор пользователя, который аутентифицирован в системе	относительно
@@ -92,12 +92,11 @@ async function getSheets(conditions) {
 async function updateSheet(conditions) {
   let attributes = '';
   let returning = ' RETURNING id';
-  let visi = '';
 
-  const visionsParams = [];
   const params = [];
 
   let haveCondition = false;
+  let haveVision = false;
 
   try {
     conditionMustBeSet(conditions, 'mainUser_id');
@@ -123,21 +122,7 @@ async function updateSheet(conditions) {
         haveCondition = true;
         break;
       case 'vision':
-        visionsParams.push(conditions.id);
-
-        Object.keys(conditions[prop]).forEach(key => {
-          switch (key) {
-            case 'activityStatus':
-              visi = `${visi} ($1, 1, \$${visionsParams.length + 1}),`;
-              break;
-            default:
-              break;
-          }
-
-          visionsParams.push(conditions[prop][key]);
-        });
-
-        visi = visi.substring(0, visi.length - 1);
+        haveVision = true;
         break;
       default:
         break;
@@ -148,7 +133,7 @@ async function updateSheet(conditions) {
   if (
     attributes.length === 0 &&
     haveCondition === false &&
-    visionsParams.length === 0
+    haveVision === false
   ) {
     throw new VError(
       {
@@ -168,11 +153,6 @@ async function updateSheet(conditions) {
 		UPDATE sheets SET ${attributes} WHERE (user_id = $1) AND (id = $2)
 		${returning};`;
 
-  const querySheetsVisions = `
-    INSERT INTO sheets_visions (sheet_id, vision, value) VALUES ${visi}
-    ON CONFLICT (sheet_id, vision) DO UPDATE SET value = EXCLUDED.value
-    RETURNING vision, value;`;
-
   const client = await pg.pool.connect();
 
   try {
@@ -188,7 +168,7 @@ async function updateSheet(conditions) {
       elements = Object.assign(elements, result.rows[0]);
     }
 
-    if (conditionMustSet(conditions, 'condition')) {
+    if (haveCondition) {
       elements = Object.assign(elements, {
         conditions: [],
         conditionvalues: [],
@@ -241,12 +221,48 @@ async function updateSheet(conditions) {
       }
     }
 
-    if (visionsParams.length > 0) {
-      result = await client.query(querySheetsVisions, visionsParams);
+    if (haveVision) {
       elements = Object.assign(elements, {
-        visions: [result.rows[0].vision],
-        visionvalues: [result.rows[0].value],
+        visions: [],
+        visionvalues: [],
       });
+
+      for (let i = 0; i < conditions.vision.length; i++) {
+        // Первый элемент по индексу в параметрах состояний, будет id sheet, который меняется
+        const visionsParams = [conditions.id];
+        let visi = '';
+
+        /* Обработка условий для отображения sheet элементов */
+        /* eslint-disable no-loop-func */
+        Object.keys(conditions.vision[i]).forEach(key => {
+          switch (key) {
+            case 'activityStatus':
+              visi = `${visi} ($1, 1, \$${visionsParams.length + 1}),`;
+              break;
+            default:
+              break;
+          }
+
+          if (conditions.vision[i][key] === '') {
+            visionsParams.push(null);
+          } else {
+            visionsParams.push(JSON.stringify(conditions.vision[i][key]));
+          }
+        });
+        /* eslint-enable no-loop-func */
+
+        visi = visi.substring(0, visi.length - 1);
+
+        const querySheetsVisions = `
+        INSERT INTO sheets_visions (sheet_id, vision, value) VALUES ${visi}
+        ON CONFLICT (sheet_id, vision) DO UPDATE SET value = EXCLUDED.value
+        RETURNING vision, value;`;
+
+        // eslint-disable-next-line
+        result = await client.query(querySheetsVisions, visionsParams);
+        elements.visions.push(result.rows[0].vision);
+        elements.visionvalues.push(result.rows[0].value);
+      }
     }
 
     await client.query('COMMIT');
